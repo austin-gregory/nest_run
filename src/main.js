@@ -535,6 +535,7 @@ export async function initGame() {
     player.hp = 0;
     ui.setStatus("Killed - Respawning...");
     ui.banner("YOU WERE SHREDDED", 1.8);
+    drawGunSplatter();
     hud();
   }
 
@@ -553,6 +554,7 @@ export async function initGame() {
     game.deathRoll = 0;
     ui.setStatus("Respawned");
     ui.banner("BACK IN", 1);
+    clearGunSplatter();
     hud();
   }
 
@@ -569,7 +571,7 @@ export async function initGame() {
         map.cart.p -= (map.cart.back * dt) / (WORLD.TRACK_START - WORLD.TRACK_END);
         ui.setStatus("Car rolling back - spawn rate rising");
       } else {
-        ui.setStatus("Get close to the rail car");
+        ui.setStatus("Get closer");
       }
     }
 
@@ -843,6 +845,53 @@ export async function initGame() {
 
   const veil = document.getElementById("veil");
 
+  const splatterCanvas = document.createElement("canvas");
+  splatterCanvas.width = innerWidth;
+  splatterCanvas.height = innerHeight;
+  splatterCanvas.style.cssText = "position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:10;";
+  document.body.appendChild(splatterCanvas);
+  const splatterCtx = splatterCanvas.getContext("2d");
+
+  function drawGunSplatter() {
+    const ctx = splatterCtx;
+    const w = splatterCanvas.width;
+    const h = splatterCanvas.height;
+    for (let i = 0; i < 11; i++) {
+      const x = Math.random() * w;
+      const y = Math.random() * h;
+      const r = 5 + Math.random() * 22;
+      const red = 100 + Math.floor(Math.random() * 50);
+      ctx.beginPath();
+      ctx.ellipse(x, y, r, r * (0.6 + Math.random() * 0.7), Math.random() * Math.PI, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${red},0,0,${0.55 + Math.random() * 0.45})`;
+      ctx.fill();
+      // small satellite drops
+      for (let j = 0; j < 3; j++) {
+        const sx = x + (Math.random() - 0.5) * r * 3;
+        const sy = y + (Math.random() - 0.5) * r * 3;
+        const sr = 2 + Math.random() * 6;
+        ctx.beginPath();
+        ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${red},0,0,${0.4 + Math.random() * 0.5})`;
+        ctx.fill();
+      }
+      // drip
+      if (Math.random() > 0.45) {
+        const dripLen = 20 + Math.random() * 55;
+        ctx.beginPath();
+        ctx.moveTo(x, y + r);
+        ctx.quadraticCurveTo(x + (Math.random() - 0.5) * 8, y + r + dripLen * 0.5, x + (Math.random() - 0.5) * 6, y + r + dripLen);
+        ctx.lineWidth = 1.5 + Math.random() * 3.5;
+        ctx.strokeStyle = `rgba(${red},0,0,${0.45 + Math.random() * 0.45})`;
+        ctx.stroke();
+      }
+    }
+  }
+
+  function clearGunSplatter() {
+    splatterCtx.clearRect(0, 0, splatterCanvas.width, splatterCanvas.height);
+  }
+
   const hipOffset = new THREE.Vector3();
   const adsOffset = new THREE.Vector3();
   let last = performance.now() / 1000;
@@ -920,8 +969,8 @@ export async function initGame() {
     const swx = (Math.sin(t * swayFreqX) * 0.014 + bx * 0.8) * sway;
     const swy = (Math.cos(t * swayFreqY) * 0.01 + by * 0.7) * sway;
 
-    hipOffset.set(0.23 + swx, -0.28 + swy, -0.44);
-    adsOffset.set(0.06 + swx * 0.4, -0.23 + swy * 0.4, -0.3);
+    hipOffset.set(0.41 + swx, 0.08 + swy, -0.44);
+    adsOffset.set(0.24 + swx * 0.4, 0.13 + swy * 0.4, -0.3);
     weaponView.gun.position.copy(camera.position);
     weaponView.gun.quaternion.copy(camera.quaternion);
     weaponView.gun.position.add((input.pointer.aim ? adsOffset : hipOffset).clone().applyQuaternion(camera.quaternion));
