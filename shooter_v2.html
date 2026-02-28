@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Nest Run FPS</title>
+  <style>
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#05070a}canvas{display:block}
+    #hud{position:fixed;inset:0;pointer-events:none;color:#fff;font-family:Segoe UI,Tahoma,sans-serif}
+    #a,#m{position:absolute;background:rgba(0,0,0,.38);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:8px 10px}
+    #a{left:12px;top:10px;font-size:14px}
+    #m{right:12px;top:10px;font-size:13px;max-width:360px}
+    #x{position:absolute;left:50%;top:50%;width:20px;height:20px;transform:translate(-50%,-50%)}
+    #x:before,#x:after{content:"";position:absolute;left:50%;top:50%;background:#fff;transform:translate(-50%,-50%)}
+    #x:before{width:2px;height:20px}#x:after{width:20px;height:2px}
+    #bn{position:absolute;left:50%;top:18%;transform:translate(-50%,-50%);font-size:34px;font-weight:800;background:rgba(0,0,0,.45);padding:8px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.1);opacity:0;transition:opacity .15s}
+    #optic{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity .12s}
+    #optic-bg{position:absolute;inset:0;background:rgba(0,0,0,.45);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);
+      -webkit-mask:radial-gradient(circle 150px at 50% 50%,transparent 0 132px,#000 141px 100%);
+      mask:radial-gradient(circle 150px at 50% 50%,transparent 0 132px,#000 141px 100%)}
+    #optic-ring{position:absolute;left:50%;top:50%;width:276px;height:276px;transform:translate(-50%,-50%);border-radius:50%;
+      border:7px solid rgba(22,22,22,.92);box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 0 18px rgba(0,0,0,.65)}
+    #optic-post-l,#optic-post-r{position:absolute;top:50%;width:14px;height:88px;background:rgba(25,25,25,.95);transform:translateY(-50%)}
+    #optic-post-l{left:calc(50% - 150px)}#optic-post-r{left:calc(50% + 136px)}
+    #optic-dot{position:absolute;left:50%;top:50%;width:5px;height:5px;background:rgba(90,255,140,.95);border-radius:50%;
+      transform:translate(-50%,-50%);box-shadow:0 0 8px rgba(90,255,140,.85)}
+    #veil{position:fixed;inset:0;background:#a00000;pointer-events:none;opacity:0}
+
+    /* ── Sci-fi HUD panel ─────────────────────────────────────── */
+    #b{
+      position:absolute;left:14px;bottom:16px;
+      width:460px;
+      font-family:'Courier New',Courier,monospace;font-size:11px;
+      background:rgba(2,10,22,.88);
+      border:1px solid rgba(0,180,255,.22);border-radius:4px;
+      padding:10px 14px 8px;
+      box-shadow:0 0 28px rgba(0,140,255,.1),inset 0 0 0 1px rgba(0,180,255,.05);
+      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+      color:rgba(160,220,255,.85);
+    }
+    .hs{margin-bottom:7px}
+    .hlb{font-size:9px;letter-spacing:.2em;color:rgba(0,190,255,.5);margin-bottom:3px;text-transform:uppercase}
+    .brow{display:flex;align-items:center;gap:8px}
+    .bt{flex:1;height:5px;background:rgba(255,255,255,.06);border:1px solid rgba(0,180,255,.14);border-radius:2px;position:relative;overflow:visible}
+    .bf{height:100%;border-radius:2px;transition:width .1s}
+    .hp-hi{background:linear-gradient(90deg,#00b860,#00e87a);box-shadow:0 0 8px rgba(0,232,122,.4)}
+    .hp-mid{background:linear-gradient(90deg,#b88000,#e8c000);box-shadow:0 0 8px rgba(232,192,0,.4)}
+    .hp-low{background:linear-gradient(90deg,#b82000,#e84000);box-shadow:0 0 8px rgba(232,64,0,.5)}
+    #prb{background:linear-gradient(90deg,rgba(0,140,255,.6),rgba(0,220,255,.9));box-shadow:0 0 6px rgba(0,200,255,.3)}
+    #pric{position:absolute;top:50%;transform:translate(-50%,-50%);left:0%;
+      width:0;height:0;border-left:7px solid #00e0ff;border-top:5px solid transparent;border-bottom:5px solid transparent;
+      filter:drop-shadow(0 0 4px #00e0ff);transition:left .1s}
+    .bv{font-size:12px;font-weight:700;color:#fff;min-width:36px;text-align:right;letter-spacing:.04em}
+    .srow{display:flex;gap:0;border-top:1px solid rgba(0,180,255,.12);padding-top:6px;margin-top:2px}
+    .sc{display:flex;flex-direction:column;gap:1px;flex:1}
+    .sc.wide{flex:2}
+    .sv{font-size:14px;font-weight:700;color:#fff;letter-spacing:.02em}
+    .sv.sm{font-size:11px;font-weight:400;color:rgba(200,240,255,.85);word-break:break-all}
+  </style>
+</head>
+<body>
+<div id="hud">
+  <div id="a"><b>Nest Run</b><div>Click to play • WASD • Shift • Space • LMB • RMB</div></div>
+  <div id="m"></div><div id="bn"></div><div id="x"></div>
+  <div id="optic">
+    <div id="optic-bg"></div><div id="optic-ring"></div><div id="optic-post-l"></div><div id="optic-post-r"></div><div id="optic-dot"></div>
+  </div>
+  <div id="veil"></div>
+
+  <div id="b">
+    <div class="hs">
+      <div class="hlb">Health</div>
+      <div class="brow">
+        <div class="bt"><div id="hpb" class="bf hp-hi"></div></div>
+        <div class="bv" id="hp">200</div>
+      </div>
+    </div>
+    <div class="hs">
+      <div class="hlb">Cargo to Nest &#9654;</div>
+      <div class="brow">
+        <div class="bt"><div id="prb" class="bf"></div><div id="pric"></div></div>
+        <div class="bv" id="pr">0%</div>
+      </div>
+    </div>
+    <div class="srow">
+      <div class="sc"><div class="hlb">Active</div><div class="sv" id="en">0</div></div>
+      <div class="sc"><div class="hlb">Kills</div><div class="sv" id="kl">0</div></div>
+      <div class="sc"><div class="hlb">Deaths</div><div class="sv" id="de">0</div></div>
+      <div class="sc"><div class="hlb">Time</div><div class="sv" id="tm">0:00</div></div>
+      <div class="sc wide"><div class="hlb">Status</div><div class="sv sm" id="st">Ready</div></div>
+    </div>
+  </div>
+</div>
+<script type="module">
+import { initGame } from "./src/main.js";
+initGame().catch((err) => {
+  console.error(err);
+  const m = document.getElementById("m");
+  if (m) m.textContent = `Startup error: ${err?.message || err}`;
+});
+</script>
+</body>
+</html>
