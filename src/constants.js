@@ -10,7 +10,7 @@ export const WORLD = {
 
 export const ASSETS = {
   // Set to a local/hosted .glb or .gltf path when you have a custom gun model.
-  gunModelUrl: "./assets/gun.glb",
+  gunModelUrl: "./assets/smg.glb",
   // Optional texture path (png/jpg/webp). Applied to all gun meshes.
   gunTextureUrl: null,
   // If your model has a muzzle node, name it here.
