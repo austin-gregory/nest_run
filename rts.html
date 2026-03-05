@@ -48,9 +48,33 @@
     .bar-val{font-size:12px;font-weight:700;min-width:38px;text-align:right}
 
     #spawn-hint{
-      position:absolute;bottom:90px;left:50%;transform:translateX(-50%);
+      position:absolute;bottom:130px;left:50%;transform:translateX(-50%);
       font-size:13px;color:rgba(0,190,255,.6);letter-spacing:.1em;
       pointer-events:none;
+    }
+
+    #ability-bar{
+      position:absolute;bottom:94px;left:50%;transform:translateX(-50%);
+      display:flex;gap:8px;pointer-events:auto;
+    }
+    .ability-btn{
+      position:relative;
+      padding:8px 16px;font-size:12px;font-family:'Courier New',Courier,monospace;
+      background:rgba(2,10,22,.88);color:#aaa;
+      border:1px solid rgba(0,180,255,.22);border-radius:4px;
+      cursor:pointer;letter-spacing:.1em;
+      transition:border-color .15s,color .15s;
+    }
+    .ability-btn:hover{border-color:rgba(0,180,255,.5);color:#fff}
+    .ability-btn.active{border-color:#00b4ff;color:#fff;box-shadow:0 0 12px rgba(0,180,255,.25)}
+    .ability-btn.acid.active{border-color:#00dd44;color:#00ff55;box-shadow:0 0 12px rgba(0,220,68,.3)}
+    .ability-btn.wall.active{border-color:#b08a7a;color:#d4a88a;box-shadow:0 0 12px rgba(176,138,122,.3)}
+    .ability-cooldown{
+      position:absolute;bottom:0;left:0;right:0;
+      background:rgba(0,0,0,.65);color:#ff6;
+      font-size:11px;font-weight:700;
+      text-align:center;line-height:1;
+      display:none;pointer-events:none;
     }
 
     #rts-msg{
@@ -93,6 +117,15 @@
     </div>
   </div>
 
+  <div id="ability-bar">
+    <button class="ability-btn active" id="ability-basic">[1] BASIC BUG — 20</button>
+    <button class="ability-btn acid" id="ability-acid">[2] ACID BUG — 60
+      <div class="ability-cooldown" id="acid-cooldown-overlay"></div>
+    </button>
+    <button class="ability-btn wall" id="ability-wall">[3] WALL — 80
+      <div class="ability-cooldown" id="wall-cooldown-overlay"></div>
+    </button>
+  </div>
   <div id="spawn-hint">Click on the map to spawn bugs (cost: 20 biomass)</div>
   <div id="rts-msg"></div>
 </div>

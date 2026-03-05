@@ -11,6 +11,14 @@ const RTS = {
   BASIC_BUG_SPEED: 6,
   SPAWN_COOLDOWN: 0.5,
   TIME_LIMIT: 600,
+  ACID_BUG_COST: 60,
+  ACID_BUG_HP: 50,
+  ACID_BUG_SPEED: 7,
+  ACID_BUG_COOLDOWN: 15,
+  ACID_BLIND_RADIUS: 18,
+  WALL_COST: 80,
+  WALL_HP: 400,
+  WALL_COOLDOWN: 25,
 };
 
 const COUNTDOWN_SECONDS = 30;
@@ -21,7 +29,11 @@ class GameRoom extends Room {
     this.setState(new GameState());
 
     this._nextEnemyId = 1;
+    this._nextWallId = 1;
     this._lastSpawnTime = {};      // sessionId -> timestamp
+    this._lastAcidSpawnTime = {};  // sessionId -> timestamp
+    this._lastWallSpawnTime = {};  // sessionId -> timestamp
+    this._walls = {};              // wallId -> { id, z, hp }
     this._disconnectTimers = {};   // sessionId -> timeout handle
     this._tickInterval = null;
     this._autoStartTimer = null;
@@ -46,14 +58,22 @@ class GameRoom extends Room {
       const player = this.state.players.get(client.sessionId);
       if (!player || player.role !== "rts") return;
 
-      const cost = data.cost || RTS.BASIC_BUG_COST;
+      const bugType = data.bugType || "basic";
+      const cost = data.cost || (bugType === "acid" ? RTS.ACID_BUG_COST : RTS.BASIC_BUG_COST);
       if (this.state.biomass < cost) return;
 
-      // Cooldown check
+      // Cooldown check (basic spawn cooldown)
       const now = Date.now();
       const lastSpawn = this._lastSpawnTime[client.sessionId] || 0;
       if (now - lastSpawn < RTS.SPAWN_COOLDOWN * 1000) return;
       this._lastSpawnTime[client.sessionId] = now;
+
+      // Acid-specific cooldown
+      if (bugType === "acid") {
+        const lastAcid = this._lastAcidSpawnTime[client.sessionId] || 0;
+        if (now - lastAcid < RTS.ACID_BUG_COOLDOWN * 1000) return;
+        this._lastAcidSpawnTime[client.sessionId] = now;
+      }
 
       // Validate position bounds
       const x = Number(data.x) || 0;
@@ -67,9 +87,10 @@ class GameRoom extends Room {
       enemy.id = id;
       enemy.x = x;
       enemy.z = z;
-      enemy.hp = data.hp || RTS.BASIC_BUG_HP;
-      enemy.speed = data.speed || RTS.BASIC_BUG_SPEED;
+      enemy.hp = data.hp || (bugType === "acid" ? RTS.ACID_BUG_HP : RTS.BASIC_BUG_HP);
+      enemy.speed = data.speed || (bugType === "acid" ? RTS.ACID_BUG_SPEED : RTS.BASIC_BUG_SPEED);
       enemy.alive = true;
+      enemy.bugType = bugType;
       this.state.enemies.set(id, enemy);
 
       // Tell FPS client to spawn the bug
@@ -77,6 +98,7 @@ class GameRoom extends Room {
         id, x, z,
         hp: enemy.hp,
         speed: enemy.speed,
+        bugType,
       });
     });
 
@@ -91,6 +113,8 @@ class GameRoom extends Room {
       const hp = Number(data.hp) || RTS.BASIC_BUG_HP;
       const speed = Number(data.speed) || RTS.BASIC_BUG_SPEED;
 
+      const bugType = data.bugType || "basic";
+
       const id = "e" + (this._nextEnemyId++);
       const enemy = new Enemy();
       enemy.id = id;
@@ -99,9 +123,10 @@ class GameRoom extends Room {
       enemy.hp = hp;
       enemy.speed = speed;
       enemy.alive = true;
+      enemy.bugType = bugType;
       this.state.enemies.set(id, enemy);
 
-      this.broadcast("enemySpawn", { id, x, z, hp, speed });
+      this.broadcast("enemySpawn", { id, x, z, hp, speed, bugType });
     });
 
     // FPS client reports an enemy was killed
@@ -113,6 +138,10 @@ class GameRoom extends Room {
       const id = data.id;
       const enemy = this.state.enemies.get(id);
       if (enemy) {
+        // If acid bug, broadcast blind effect to all FPS clients
+        if (enemy.bugType === "acid") {
+          this.broadcast("acidBlind", { x: enemy.x, z: enemy.z });
+        }
         enemy.alive = false;
         this.state.enemies.delete(id);
       }
@@ -175,6 +204,49 @@ class GameRoom extends Room {
       const player = this.state.players.get(client.sessionId);
       if (!player || player.role !== "fps") return;
       this._endGame("fps");
+    });
+
+    // RTS player requests wall spawn on the track
+    this.onMessage("spawnWall", (client, data) => {
+      if (this.state.phase !== "playing") return;
+      const player = this.state.players.get(client.sessionId);
+      if (!player || player.role !== "rts") return;
+
+      if (this.state.biomass < RTS.WALL_COST) return;
+
+      const now = Date.now();
+      const lastWall = this._lastWallSpawnTime[client.sessionId] || 0;
+      if (now - lastWall < RTS.WALL_COOLDOWN * 1000) return;
+
+      // Snap to track center, only use the Z coordinate
+      const z = Number(data.z) || 0;
+      if (Math.abs(z) > 140) return;
+
+      this._lastWallSpawnTime[client.sessionId] = now;
+      this.state.biomass -= RTS.WALL_COST;
+
+      const id = "w" + (this._nextWallId++);
+      this._walls[id] = { id, z, hp: RTS.WALL_HP };
+      this.broadcast("wallSpawn", { id, z, hp: RTS.WALL_HP });
+    });
+
+    // FPS client reports wall damage
+    this.onMessage("wallHit", (client, data) => {
+      if (this.state.phase !== "playing") return;
+      const player = this.state.players.get(client.sessionId);
+      if (!player || player.role !== "fps") return;
+
+      const wall = this._walls[data.id];
+      if (!wall) return;
+      const dmg = Number(data.dmg) || 0;
+      if (dmg <= 0 || dmg > 100) return;
+      wall.hp -= dmg;
+      this.broadcast("wallDamage", { id: wall.id, hp: wall.hp });
+
+      if (wall.hp <= 0) {
+        this.broadcast("wallDestroyed", { id: wall.id, z: wall.z });
+        delete this._walls[wall.id];
+      }
     });
   }
 

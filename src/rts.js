@@ -44,7 +44,44 @@ export async function initRTS() {
   const ZOOM_MIN = 0.4, ZOOM_MAX = 2.5;
   const keys = new Set();
 
-  addEventListener("keydown", (e) => keys.add(e.code));
+  // ── Bug type selection ──────────────────────────────────────────────────
+  let selectedAbility = "basic"; // "basic" | "acid" | "wall"
+  let lastAcidSpawnTime = 0;
+  let lastWallSpawnTime = 0;
+
+  const abilityBasicBtn = document.getElementById("ability-basic");
+  const abilityAcidBtn = document.getElementById("ability-acid");
+  const abilityWallBtn = document.getElementById("ability-wall");
+  const acidCooldownOverlay = document.getElementById("acid-cooldown-overlay");
+  const wallCooldownOverlay = document.getElementById("wall-cooldown-overlay");
+  const spawnHintEl = document.getElementById("spawn-hint");
+
+  function selectAbility(type) {
+    selectedAbility = type;
+    if (abilityBasicBtn) abilityBasicBtn.classList.toggle("active", type === "basic");
+    if (abilityAcidBtn) abilityAcidBtn.classList.toggle("active", type === "acid");
+    if (abilityWallBtn) abilityWallBtn.classList.toggle("active", type === "wall");
+    const colors = { basic: 0xff4400, acid: 0x00dd44, wall: 0xb08a7a };
+    spawnPreviewMat.color.setHex(colors[type] || 0xff4400);
+    const hints = {
+      basic: "Click on the map to spawn bugs (cost: 20 biomass)",
+      acid: "Click to spawn ACID BUG (cost: 60 biomass)",
+      wall: "Click on the TRACK to spawn a WALL (cost: 80 biomass)",
+    };
+    if (spawnHintEl) spawnHintEl.textContent = hints[type] || hints.basic;
+  }
+
+  if (abilityBasicBtn) abilityBasicBtn.addEventListener("click", () => selectAbility("basic"));
+  if (abilityAcidBtn) abilityAcidBtn.addEventListener("click", () => selectAbility("acid"));
+  if (abilityWallBtn) abilityWallBtn.addEventListener("click", () => selectAbility("wall"));
+  // ──────────────────────────────────────────────────────────────────────
+
+  addEventListener("keydown", (e) => {
+    keys.add(e.code);
+    if (e.code === "Digit1") selectAbility("basic");
+    if (e.code === "Digit2") selectAbility("acid");
+    if (e.code === "Digit3") selectAbility("wall");
+  });
   addEventListener("keyup", (e) => keys.delete(e.code));
   addEventListener("wheel", (e) => {
     zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom + e.deltaY * 0.001));
@@ -69,6 +106,41 @@ export async function initRTS() {
   const dirGeoTemplate = new THREE.ConeGeometry(0.6, 3, 4);
   dirGeoTemplate.rotateX(Math.PI / 2);
   dirGeoTemplate.translate(0, 0, -3);
+
+  // ── Blind label sprite helper ──────────────────────────────────────────
+  function makeBlindLabel() {
+    const canvas = document.createElement("canvas");
+    canvas.width = 128;
+    canvas.height = 32;
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(16, 4, 1);
+    sprite.position.set(0, 8, 0);
+    sprite.visible = false;
+    return { sprite, canvas, tex };
+  }
+
+  function updateBlindLabel(label, seconds) {
+    const ctx = label.canvas.getContext("2d");
+    ctx.clearRect(0, 0, 128, 32);
+    if (seconds > 0) {
+      ctx.font = "bold 22px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#00ff44";
+      ctx.fillText("BLIND " + Math.ceil(seconds) + "s", 64, 16);
+      label.tex.needsUpdate = true;
+      label.sprite.visible = true;
+    } else {
+      label.sprite.visible = false;
+    }
+  }
+
+  const fpsBlindTimers = new Map(); // sessionId → { endTime }
+  const fpsBlindLabels = new Map(); // sessionId → { sprite, canvas, tex }
+  // ──────────────────────────────────────────────────────────────────────
 
   function createFpsMarker(colorIndex) {
     const color = FPS_COLORS[colorIndex] || 0x00cc44;
@@ -99,6 +171,26 @@ export async function initRTS() {
     if (mesh) {
       scene.remove(mesh);
       enemyMarkers.delete(id);
+    }
+  }
+
+  // Wall markers on RTS map
+  const wallMarkers = new Map(); // wallId -> mesh
+  const wallMarkerGeo = new THREE.BoxGeometry(RTS.WALL_WIDTH, 3, RTS.WALL_DEPTH);
+  const wallMarkerMat = new THREE.MeshBasicMaterial({ color: 0xb08a7a, transparent: true, opacity: 0.8 });
+
+  function addWallMarker(id, z) {
+    const mesh = new THREE.Mesh(wallMarkerGeo, wallMarkerMat.clone());
+    mesh.position.set(0, 5, z);
+    scene.add(mesh);
+    wallMarkers.set(id, mesh);
+  }
+
+  function removeWallMarker(id) {
+    const mesh = wallMarkers.get(id);
+    if (mesh) {
+      scene.remove(mesh);
+      wallMarkers.delete(id);
     }
   }
 
@@ -171,7 +263,8 @@ export async function initRTS() {
     // Update spawn preview position
     raycaster.setFromCamera(mouse, camera);
     if (raycaster.ray.intersectPlane(groundPlane, intersectPoint)) {
-      spawnPreview.position.set(intersectPoint.x, 1, intersectPoint.z);
+      const previewX = selectedAbility === "wall" ? 0 : intersectPoint.x;
+      spawnPreview.position.set(previewX, 1, intersectPoint.z);
       spawnPreview.visible = room && room.state && room.state.phase === "playing";
     }
   });
@@ -180,38 +273,70 @@ export async function initRTS() {
     if (!room || room.state.phase !== "playing") return;
 
     const now = Date.now();
+
+    mouse.x = (e.clientX / innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    if (!raycaster.ray.intersectPlane(groundPlane, intersectPoint)) return;
+
+    const x = intersectPoint.x;
+    const z = intersectPoint.z;
+    if (Math.abs(x) > 140 || Math.abs(z) > 140) {
+      rtsMsg("Out of bounds!", 1);
+      return;
+    }
+
+    // ── Wall ability ──
+    if (selectedAbility === "wall") {
+      if (room.state.biomass < RTS.WALL_COST) {
+        rtsMsg("Not enough biomass!", 1);
+        return;
+      }
+      if (now - lastWallSpawnTime < RTS.WALL_COOLDOWN * 1000) {
+        const remaining = Math.ceil((RTS.WALL_COOLDOWN * 1000 - (now - lastWallSpawnTime)) / 1000);
+        rtsMsg("Wall cooldown: " + remaining + "s", 0.8);
+        return;
+      }
+      // Snap to track — must be within track Z range
+      if (z > WORLD.TRACK_START || z < WORLD.TRACK_END) {
+        rtsMsg("Place wall on the track!", 1);
+        return;
+      }
+      lastWallSpawnTime = now;
+      room.send("spawnWall", { z });
+      return;
+    }
+
+    // ── Bug abilities ──
     if (now - lastSpawnTime < RTS.SPAWN_COOLDOWN * 1000) {
       rtsMsg("Cooldown...", 0.5);
       return;
     }
 
-    if (room.state.biomass < RTS.BASIC_BUG_COST) {
+    const isAcid = selectedAbility === "acid";
+    const cost = isAcid ? RTS.ACID_BUG_COST : RTS.BASIC_BUG_COST;
+    const hp = isAcid ? RTS.ACID_BUG_HP : RTS.BASIC_BUG_HP;
+    const speed = isAcid ? RTS.ACID_BUG_SPEED : RTS.BASIC_BUG_SPEED;
+
+    if (room.state.biomass < cost) {
       rtsMsg("Not enough biomass!", 1);
       return;
     }
 
-    mouse.x = (e.clientX / innerWidth) * 2 - 1;
-    mouse.y = -(e.clientY / innerHeight) * 2 + 1;
-    raycaster.setFromCamera(mouse, camera);
-
-    if (raycaster.ray.intersectPlane(groundPlane, intersectPoint)) {
-      const x = intersectPoint.x;
-      const z = intersectPoint.z;
-
-      // Validate bounds
-      if (Math.abs(x) > 140 || Math.abs(z) > 140) {
-        rtsMsg("Out of bounds!", 1);
+    if (isAcid) {
+      if (now - lastAcidSpawnTime < RTS.ACID_BUG_COOLDOWN * 1000) {
+        const remaining = Math.ceil((RTS.ACID_BUG_COOLDOWN * 1000 - (now - lastAcidSpawnTime)) / 1000);
+        rtsMsg("Acid cooldown: " + remaining + "s", 0.8);
         return;
       }
-
-      lastSpawnTime = now;
-      room.send("spawnEnemy", {
-        x, z,
-        hp: RTS.BASIC_BUG_HP,
-        speed: RTS.BASIC_BUG_SPEED,
-        cost: RTS.BASIC_BUG_COST,
-      });
     }
+
+    lastSpawnTime = now;
+    if (isAcid) lastAcidSpawnTime = now;
+    room.send("spawnEnemy", {
+      x, z, hp, speed, cost,
+      bugType: selectedAbility,
+    });
   });
 
   // ── Network connection ─────────────────────────────────────────────────
@@ -268,6 +393,30 @@ export async function initRTS() {
       addEnemyMarker(data.id, data.x, data.z);
     });
 
+    // Wall spawned
+    room.onMessage("wallSpawn", (data) => {
+      addWallMarker(data.id, data.z);
+    });
+
+    // Wall destroyed
+    room.onMessage("wallDestroyed", (data) => {
+      removeWallMarker(data.id);
+    });
+
+    // Track acid blind on FPS players
+    room.onMessage("acidBlind", (data) => {
+      // Check each FPS player's distance from the acid explosion
+      if (!room || !room.state) return;
+      room.state.players.forEach((p, sid) => {
+        if (p.role !== "fps") return;
+        const dx = p.x - data.x;
+        const dz = p.z - data.z;
+        if (Math.hypot(dx, dz) <= RTS.ACID_BLIND_RADIUS) {
+          fpsBlindTimers.set(sid, { endTime: performance.now() / 1000 + RTS.ACID_BLIND_DURATION });
+        }
+      });
+    });
+
     room.onMessage("gameOver", (data) => {
       showGameOverRTS(data.winner);
     });
@@ -285,6 +434,10 @@ export async function initRTS() {
         if (!marker) {
           marker = createFpsMarker(p.colorIndex);
           fpsMarkers.set(sid, marker);
+          // Attach blind label
+          const label = makeBlindLabel();
+          marker.add(label.sprite);
+          fpsBlindLabels.set(sid, label);
         }
         marker.position.set(p.x, 10, p.z);
         marker.rotation.y = -p.yaw;
@@ -294,6 +447,8 @@ export async function initRTS() {
         if (!seenFps.has(sid)) {
           scene.remove(marker);
           fpsMarkers.delete(sid);
+          fpsBlindLabels.delete(sid);
+          fpsBlindTimers.delete(sid);
         }
       }
 
@@ -386,15 +541,50 @@ export async function initRTS() {
       updateCamera();
     }
 
-    // Pulse player markers
+    // Pulse player markers + update blind labels
     const pulse = 1 + Math.sin(t * 4) * 0.15;
-    for (const [, marker] of fpsMarkers) {
+    for (const [sid, marker] of fpsMarkers) {
       marker.scale.setScalar(pulse);
+      const label = fpsBlindLabels.get(sid);
+      if (label) {
+        const bt = fpsBlindTimers.get(sid);
+        const remaining = bt ? bt.endTime - t : 0;
+        updateBlindLabel(label, remaining > 0 ? remaining : 0);
+        // Counter-rotate sprite so it always faces camera (undo marker rotation)
+        label.sprite.material.rotation = marker.rotation.y;
+      }
     }
 
     // Pulse enemy markers
     for (const [, mesh] of enemyMarkers) {
       mesh.scale.setScalar(0.8 + Math.sin(t * 3 + mesh.position.x) * 0.15);
+    }
+
+    // Update cooldown overlays
+    const now = Date.now();
+    if (acidCooldownOverlay) {
+      const elapsed = now - lastAcidSpawnTime;
+      const cdMs = RTS.ACID_BUG_COOLDOWN * 1000;
+      if (lastAcidSpawnTime > 0 && elapsed < cdMs) {
+        const pct = 1 - elapsed / cdMs;
+        acidCooldownOverlay.style.height = (pct * 100).toFixed(1) + "%";
+        acidCooldownOverlay.style.display = "block";
+        acidCooldownOverlay.textContent = Math.ceil((cdMs - elapsed) / 1000) + "s";
+      } else {
+        acidCooldownOverlay.style.display = "none";
+      }
+    }
+    if (wallCooldownOverlay) {
+      const elapsed = now - lastWallSpawnTime;
+      const cdMs = RTS.WALL_COOLDOWN * 1000;
+      if (lastWallSpawnTime > 0 && elapsed < cdMs) {
+        const pct = 1 - elapsed / cdMs;
+        wallCooldownOverlay.style.height = (pct * 100).toFixed(1) + "%";
+        wallCooldownOverlay.style.display = "block";
+        wallCooldownOverlay.textContent = Math.ceil((cdMs - elapsed) / 1000) + "s";
+      } else {
+        wallCooldownOverlay.style.display = "none";
+      }
     }
 
     renderer.render(scene, camera);

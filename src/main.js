@@ -79,7 +79,7 @@ export async function initGame() {
     fa: 0.35,
   };
 
-  const game = { win: false, deaths: 0, kills: 0, resp: false, respT: 0, spawnT: 0, deathRoll: 0, elapsed: 0, startTime: 0 };
+  const game = { win: false, started: false, deaths: 0, kills: 0, resp: false, respT: 0, spawnT: 0, deathRoll: 0, elapsed: 0, startTime: 0 };
   const weapon = {
     rate: 11.2,
     hip: 0.011,
@@ -190,6 +190,42 @@ export async function initGame() {
     new THREE.MeshBasicMaterial({ color: 0xc01010 }),
     new THREE.MeshBasicMaterial({ color: 0x4a0000 }),
   ];
+  const acidGoreMats = [
+    new THREE.MeshBasicMaterial({ color: 0x00aa22 }),
+    new THREE.MeshBasicMaterial({ color: 0x00dd44 }),
+    new THREE.MeshBasicMaterial({ color: 0x33ff55 }),
+    new THREE.MeshBasicMaterial({ color: 0x007a18 }),
+  ];
+  function spawnAcidGore(pos) {
+    const chunks = 7;
+    const pixels = 26;
+    for (let i = 0; i < chunks + pixels; i++) {
+      const isChunk = i < chunks;
+      const mesh = new THREE.Mesh(
+        isChunk ? goreChunkGeo : gorePixelGeo,
+        acidGoreMats[Math.floor(Math.random() * acidGoreMats.length)]
+      );
+      const size = isChunk ? 0.12 + Math.random() * 0.14 : 0.04 + Math.random() * 0.07;
+      mesh.scale.setScalar(size);
+      mesh.position.set(
+        pos.x + (Math.random() - 0.5) * 0.8,
+        pos.y + (Math.random() - 0.5) * 0.4,
+        pos.z + (Math.random() - 0.5) * 0.8
+      );
+      mesh.rotation.set(Math.random() * Math.PI * 2, Math.random() * Math.PI * 2, 0);
+      scene.add(mesh);
+      const speed = isChunk ? 2.5 + Math.random() * 4 : 1.5 + Math.random() * 6;
+      const angle = Math.random() * Math.PI * 2;
+      const vy = isChunk ? speed * (0.4 + Math.random() * 0.9) : speed * Math.random() * 0.8;
+      gore.push({
+        mesh,
+        vel: new THREE.Vector3(Math.cos(angle) * speed, vy, Math.sin(angle) * speed),
+        life: 0.7 + Math.random() * 1.1,
+      });
+    }
+    while (gore.length > 300) scene.remove(gore.shift().mesh);
+  }
+
   function spawnGore(pos) {
     const chunks = 7;
     const pixels = 26;
@@ -233,6 +269,81 @@ export async function initGame() {
   const enemies = [];
   const targets = [];
   const rayTargets = [];
+  const walls = []; // { id, mesh, hp, maxHp, z }
+
+  // ── Wall (nest barrier) ──────────────────────────────────────────────
+  const nestWallTex = new THREE.TextureLoader().load("./assets/nest.png");
+  nestWallTex.wrapS = THREE.RepeatWrapping;
+  nestWallTex.wrapT = THREE.RepeatWrapping;
+  nestWallTex.repeat.set(2, 1);
+  nestWallTex.colorSpace = THREE.SRGBColorSpace;
+
+  function spawnWall(id, z, hp) {
+    const geo = new THREE.BoxGeometry(RTS.WALL_WIDTH, RTS.WALL_HEIGHT, RTS.WALL_DEPTH);
+    const mat = new THREE.MeshStandardMaterial({
+      map: nestWallTex,
+      color: 0xb08a7a,
+      roughness: 0.88,
+      emissive: 0x2a0e08,
+      emissiveIntensity: 0.6,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    const y = map.gy(0, z);
+    mesh.position.set(0, y + RTS.WALL_HEIGHT / 2, z);
+    mesh.userData.isWall = true;
+    mesh.userData.wallId = id;
+    map.world.add(mesh);
+    targets.push(mesh);
+    const w = { id, mesh, mat, hp, maxHp: hp, z };
+    walls.push(w);
+    // Add as AABB collider so players/enemies can't walk through
+    const aabb = new THREE.Box3().setFromObject(mesh);
+    map.aabbs.push(aabb);
+    w._aabb = aabb;
+    rebuildRayTargets();
+    return w;
+  }
+
+  function destroyWall(id) {
+    const idx = walls.findIndex((w) => w.id === id);
+    if (idx < 0) return;
+    const w = walls[idx];
+    // Gore explosion
+    const center = w.mesh.position.clone();
+    center.y += RTS.WALL_HEIGHT * 0.3;
+    for (let i = 0; i < 4; i++) {
+      spawnGore(center.clone().add(new THREE.Vector3(
+        (Math.random() - 0.5) * RTS.WALL_WIDTH,
+        Math.random() * 2,
+        (Math.random() - 0.5) * RTS.WALL_DEPTH * 2
+      )));
+    }
+    // Remove from targets
+    const ti = targets.indexOf(w.mesh);
+    if (ti >= 0) targets.splice(ti, 1);
+    // Remove AABB
+    const ai = map.aabbs.indexOf(w._aabb);
+    if (ai >= 0) map.aabbs.splice(ai, 1);
+    map.world.remove(w.mesh);
+    walls.splice(idx, 1);
+    rebuildRayTargets();
+  }
+
+  function getWallBlockZ() {
+    // Return the highest Z (closest to start) wall that blocks the cart
+    let blockZ = null;
+    for (const w of walls) {
+      // Cart moves from TRACK_START (high Z) toward TRACK_END (low Z)
+      // Wall blocks if the cart hasn't passed it yet
+      const cartZ = THREE.MathUtils.lerp(WORLD.TRACK_START, WORLD.TRACK_END, map.cart.p);
+      if (w.z < cartZ) {
+        if (blockZ === null || w.z > blockZ) blockZ = w.z;
+      }
+    }
+    return blockZ;
+  }
+  // ──────────────────────────────────────────────────────────────────────
+
   function rebuildRayTargets() {
     rayTargets.length = 0;
     for (const c of map.colliders) rayTargets.push(c);
@@ -316,7 +427,7 @@ export async function initGame() {
 
   // ── Spawning ────────────────────────────────────────────────────────────
   // Network-driven spawn (used in multiplayer)
-  function spawnAlienBugAt(networkId, x, z, hp, speed) {
+  function spawnAlienBugAt(networkId, x, z, hp, speed, bugType) {
     const m = mkAlienBug();
     m.g.position.set(x, map.gy(x, z), z);
     map.world.add(m.g);
@@ -330,6 +441,7 @@ export async function initGame() {
       curAction: m.curAction,
       networkId,
       hp,
+      bugType: bugType || "basic",
       vel: new THREE.Vector3(),
       yaw: Math.random() * Math.PI * 2,
       s: speed,
@@ -352,9 +464,10 @@ export async function initGame() {
     const r = 7 + Math.random() * 6;
     const x = Math.cos(a) * r;
     const z = WORLD.NEST_Z + Math.sin(a) * r;
-    const hp = 58 + game.deaths * 12 + Math.random() * 20;
-    const s = 5.4 + game.deaths * 0.25 + Math.random();
-    spawnAlienBugAt(null, x, z, hp, s);
+    const isAcid = Math.random() < 0.15;
+    const hp = isAcid ? RTS.ACID_BUG_HP : (58 + game.deaths * 12 + Math.random() * 20);
+    const s = isAcid ? RTS.ACID_BUG_SPEED : (5.4 + game.deaths * 0.25 + Math.random());
+    spawnAlienBugAt(null, x, z, hp, s, isAcid ? "acid" : "basic");
   }
   // ────────────────────────────────────────────────────────────────────────
 
@@ -549,7 +662,7 @@ export async function initGame() {
   // ──────────────────────────────────────────────────────────────────────
 
   function shoot() {
-    if (!input.pointer.locked || game.win || game.resp) return;
+    if (!input.pointer.locked || game.win || game.resp || !game.started) return;
     const now = performance.now() / 1000;
     if (now < weapon.can) return;
 
@@ -571,12 +684,15 @@ export async function initGame() {
     let camHit = fromCam.clone().addScaledVector(dir, weapon.range);
     let enemy = null;
     let part = null;
+    let hitWallId = null;
     if (hits.length) {
       camHit = hits[0].point.clone();
       const o = hits[0].object;
       if (o?.userData?.enemyRoot) {
         enemy = o.userData.enemyRoot;
         part = o.userData.hitPart || "body";
+      } else if (o?.userData?.isWall) {
+        hitWallId = o.userData.wallId;
       }
     }
 
@@ -591,10 +707,18 @@ export async function initGame() {
     let finalHit = camHit.clone();
     let eRoot = enemy;
     let ePart = part;
+    let finalWallId = hitWallId;
     if (muzzleHits.length && muzzleHits[0].distance < d - 0.02) {
       finalHit = muzzleHits[0].point.clone();
-      eRoot = muzzleHits[0].object?.userData?.enemyRoot || null;
-      ePart = muzzleHits[0].object?.userData?.hitPart || "body";
+      const mo = muzzleHits[0].object;
+      if (mo?.userData?.isWall) {
+        finalWallId = mo.userData.wallId;
+        eRoot = null;
+      } else {
+        eRoot = mo?.userData?.enemyRoot || null;
+        ePart = mo?.userData?.hitPart || "body";
+        finalWallId = null;
+      }
     }
 
     spawnTracer(muzzle.clone(), finalHit.clone());
@@ -605,6 +729,25 @@ export async function initGame() {
         fx: muzzle.x, fy: muzzle.y, fz: muzzle.z,
         tx: finalHit.x, ty: finalHit.y, tz: finalHit.z,
       });
+    }
+
+    // Wall hit
+    if (finalWallId) {
+      const w = walls.find((v) => v.id === finalWallId);
+      if (w) {
+        w.hp -= weapon.dmg;
+        // Flash the wall material
+        w.mat.emissive.setHex(0x552200);
+        w.mat.emissiveIntensity = 1.5;
+        setTimeout(() => { w.mat.emissive.setHex(0x2a0e08); w.mat.emissiveIntensity = 0.6; }, 80);
+        if (room) {
+          room.send("wallHit", { id: finalWallId, dmg: weapon.dmg });
+        }
+        if (w.hp <= 0) {
+          destroyWall(finalWallId);
+        }
+      }
+      return;
     }
 
     if (!eRoot) return;
@@ -623,7 +766,19 @@ export async function initGame() {
     en.mixer.stopAllAction();
     const gorePos = en.mesh.position.clone();
     gorePos.y += BUG_SCALE * 0.55;
-    spawnGore(gorePos);
+    if (en.bugType === "acid") {
+      spawnAcidGore(gorePos);
+      // In singleplayer, trigger blind locally; in multiplayer the server broadcasts it
+      if (!isMultiplayer) {
+        const dx = player.pos.x - en.mesh.position.x;
+        const dz = player.pos.z - en.mesh.position.z;
+        if (Math.hypot(dx, dz) <= RTS.ACID_BLIND_RADIUS) {
+          activateBlind();
+        }
+      }
+    } else {
+      spawnGore(gorePos);
+    }
     map.world.remove(en.mesh);
     enemies.splice(enemies.indexOf(en), 1);
     rebuildRayTargets();
@@ -689,11 +844,13 @@ export async function initGame() {
     const r = 7 + Math.random() * 6;
     const x = Math.cos(a) * r;
     const z = WORLD.NEST_Z + Math.sin(a) * r;
-    const hp = 58 + game.deaths * 12 + Math.random() * 20;
-    const s = 5.4 + game.deaths * 0.25 + Math.random();
+    const isAcid = Math.random() < 0.15;
+    const hp = isAcid ? RTS.ACID_BUG_HP : (58 + game.deaths * 12 + Math.random() * 20);
+    const s = isAcid ? RTS.ACID_BUG_SPEED : (5.4 + game.deaths * 0.25 + Math.random());
+    const bugType = isAcid ? "acid" : "basic";
     // Ask server to create and broadcast the enemy
     if (room) {
-      room.send("coopSpawnEnemy", { x, z, hp, speed: s });
+      room.send("coopSpawnEnemy", { x, z, hp, speed: s, bugType });
     }
   }
 
@@ -751,6 +908,16 @@ export async function initGame() {
       const serverP = room.state.cartProgress;
       if (!isNaN(serverP)) {
         map.cart.p = Math.max(map.cart.p, serverP);
+      }
+    }
+
+    // Block cart at wall positions
+    for (const w of walls) {
+      // Convert wall Z to progress value
+      const wallP = (WORLD.TRACK_START - w.z) / (WORLD.TRACK_START - WORLD.TRACK_END);
+      if (map.cart.p >= wallP - 0.005) {
+        map.cart.p = Math.min(map.cart.p, wallP - 0.005);
+        if (near && !game.resp) ui.setStatus("Wall blocking the cart - destroy it!");
       }
     }
 
@@ -1194,6 +1361,57 @@ export async function initGame() {
     splatterCtx.clearRect(0, 0, splatterCanvas.width, splatterCanvas.height);
   }
 
+  // ── Acid blind effect ──────────────────────────────────────────────────
+  let blindTimer = 0;
+  let blindActive = false;
+
+  const blindCanvas = document.createElement("canvas");
+  const BLIND_PX = 48; // pixelation grid size
+  blindCanvas.width = BLIND_PX;
+  blindCanvas.height = BLIND_PX;
+  blindCanvas.style.cssText = "position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:11;display:none;image-rendering:pixelated;";
+  document.body.appendChild(blindCanvas);
+  const blindCtx = blindCanvas.getContext("2d");
+
+  const blindText = document.createElement("div");
+  blindText.textContent = "BLINDED";
+  blindText.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-size:72px;font-weight:900;color:#fff;font-family:monospace;letter-spacing:8px;pointer-events:none;z-index:12;display:none;text-shadow:0 0 20px rgba(0,255,0,0.8);";
+  document.body.appendChild(blindText);
+
+  function updateBlindTexture(t) {
+    const ctx = blindCtx;
+    const w = BLIND_PX;
+    const h = BLIND_PX;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        // Animated noise with green variation
+        const n = Math.sin(x * 3.7 + t * 2.1) * Math.cos(y * 4.3 + t * 1.7) * 0.5 + 0.5;
+        const flicker = Math.random() * 0.15;
+        const g = Math.floor(80 + (n + flicker) * 120);
+        const r = Math.floor(g * 0.12);
+        const b = Math.floor(g * 0.08);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+  }
+
+  function activateBlind() {
+    blindTimer = RTS.ACID_BLIND_DURATION;
+    if (!blindActive) {
+      blindActive = true;
+      blindCanvas.style.display = "block";
+      blindText.style.display = "block";
+    }
+  }
+
+  function deactivateBlind() {
+    blindActive = false;
+    blindCanvas.style.display = "none";
+    blindText.style.display = "none";
+  }
+  // ──────────────────────────────────────────────────────────────────────
+
   const hipOffset = new THREE.Vector3();
   const adsOffset = new THREE.Vector3();
   let last = performance.now() / 1000;
@@ -1205,6 +1423,17 @@ export async function initGame() {
     last = t;
 
     if (!game.win) game.elapsed = t - game.startTime;
+
+    // Acid blind timer
+    if (blindTimer > 0) {
+      blindTimer -= dt;
+      if (blindTimer <= 0) {
+        blindTimer = 0;
+        deactivateBlind();
+      } else {
+        updateBlindTexture(t);
+      }
+    }
 
     if (game.resp) {
       player.pitch = THREE.MathUtils.lerp(player.pitch, 1.3, Math.min(1, 5 * dt));
@@ -1221,7 +1450,7 @@ export async function initGame() {
     const sprint = input.keys.has("ShiftLeft") || input.keys.has("ShiftRight");
     const speed = player.ground ? (sprint ? player.ss : player.ws) : player.as;
 
-    if (!game.resp && !game.win) {
+    if (!game.resp && !game.win && game.started) {
       if (player.ground) {
         friction(player.fg, dt);
         accel(wishMove, speed, player.ag, dt);
@@ -1420,14 +1649,15 @@ export async function initGame() {
       } else {
         ui.banner("COMMANDER HAS JOINED - GAME ON!", 2.5);
       }
+      game.started = true;
       game.startTime = performance.now() / 1000;
       last = performance.now() / 1000;
     });
 
     // Listen for enemy spawn commands from RTS player
     room.onMessage("enemySpawn", (data) => {
-      console.log("[network] Spawning enemy:", data.id);
-      spawnAlienBugAt(data.id, data.x, data.z, data.hp, data.speed);
+      console.log("[network] Spawning enemy:", data.id, data.bugType || "basic");
+      spawnAlienBugAt(data.id, data.x, data.z, data.hp, data.speed, data.bugType);
     });
 
     // Receive shot tracers from other players
@@ -1435,6 +1665,33 @@ export async function initGame() {
       const from = new THREE.Vector3(data.fx, data.fy, data.fz);
       const to = new THREE.Vector3(data.tx, data.ty, data.tz);
       spawnTracer(from, to);
+    });
+
+    // Acid blind effect — check distance from player
+    room.onMessage("acidBlind", (data) => {
+      const dx = player.pos.x - data.x;
+      const dz = player.pos.z - data.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist <= RTS.ACID_BLIND_RADIUS) {
+        activateBlind();
+      }
+    });
+
+    // Wall spawned by commander
+    room.onMessage("wallSpawn", (data) => {
+      console.log("[network] Wall spawned:", data.id);
+      spawnWall(data.id, data.z, data.hp);
+    });
+
+    // Wall took damage from another player
+    room.onMessage("wallDamage", (data) => {
+      const w = walls.find((v) => v.id === data.id);
+      if (w) w.hp = data.hp;
+    });
+
+    // Wall destroyed
+    room.onMessage("wallDestroyed", (data) => {
+      destroyWall(data.id);
     });
 
     // Listen for game over
@@ -1485,7 +1742,11 @@ export async function initGame() {
           en.mixer.stopAllAction();
           const gorePos = en.mesh.position.clone();
           gorePos.y += BUG_SCALE * 0.55;
-          spawnGore(gorePos);
+          if (en.bugType === "acid") {
+            spawnAcidGore(gorePos);
+          } else {
+            spawnGore(gorePos);
+          }
           map.world.remove(en.mesh);
           enemies.splice(i, 1);
         }
@@ -1494,7 +1755,7 @@ export async function initGame() {
       // Re-create enemies that exist on server but not locally (e.g. after death clear)
       state.enemies.forEach((e, id) => {
         if (!localIds.has(id)) {
-          spawnAlienBugAt(id, e.x, e.z, e.hp, e.speed);
+          spawnAlienBugAt(id, e.x, e.z, e.hp, e.speed, e.bugType);
         }
       });
 
@@ -1508,6 +1769,7 @@ export async function initGame() {
         document.body.removeChild(waitingOverlay);
         waitingOverlay = null;
       }
+      game.started = true;
       game.startTime = performance.now() / 1000;
       last = performance.now() / 1000;
     }
@@ -1523,6 +1785,7 @@ export async function initGame() {
 
   // If singleplayer (no connection), start immediately
   if (!isMultiplayer) {
+    game.started = true;
     ui.banner("ESCORT THE CAR TO THE NEST", 2);
     game.startTime = performance.now() / 1000;
     last = performance.now() / 1000;
