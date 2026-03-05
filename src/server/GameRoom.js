@@ -206,7 +206,7 @@ class GameRoom extends Room {
       this._endGame("fps");
     });
 
-    // RTS player requests wall spawn on the track
+    // RTS player requests wall spawn on the track (progress-based)
     this.onMessage("spawnWall", (client, data) => {
       if (this.state.phase !== "playing") return;
       const player = this.state.players.get(client.sessionId);
@@ -218,16 +218,15 @@ class GameRoom extends Room {
       const lastWall = this._lastWallSpawnTime[client.sessionId] || 0;
       if (now - lastWall < RTS.WALL_COOLDOWN * 1000) return;
 
-      // Snap to track center, only use the Z coordinate
-      const z = Number(data.z) || 0;
-      if (Math.abs(z) > 140) return;
+      const progress = Number(data.progress);
+      if (isNaN(progress) || progress < 0.02 || progress > 0.98) return;
 
       this._lastWallSpawnTime[client.sessionId] = now;
       this.state.biomass -= RTS.WALL_COST;
 
       const id = "w" + (this._nextWallId++);
-      this._walls[id] = { id, z, hp: RTS.WALL_HP };
-      this.broadcast("wallSpawn", { id, z, hp: RTS.WALL_HP });
+      this._walls[id] = { id, progress, hp: RTS.WALL_HP };
+      this.broadcast("wallSpawn", { id, progress, hp: RTS.WALL_HP });
     });
 
     // FPS client reports wall damage
@@ -244,7 +243,7 @@ class GameRoom extends Room {
       this.broadcast("wallDamage", { id: wall.id, hp: wall.hp });
 
       if (wall.hp <= 0) {
-        this.broadcast("wallDestroyed", { id: wall.id, z: wall.z });
+        this.broadcast("wallDestroyed", { id: wall.id });
         delete this._walls[wall.id];
       }
     });

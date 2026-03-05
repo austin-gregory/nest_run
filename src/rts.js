@@ -35,7 +35,7 @@ export async function initRTS() {
   sun.position.set(120, 180, 30);
   scene.add(sun);
 
-  const map = createWorld(scene);
+  const map = await createWorld(scene);
 
   // ── Camera controls ────────────────────────────────────────────────────
   let camX = 0, camZ = 0;
@@ -179,9 +179,13 @@ export async function initRTS() {
   const wallMarkerGeo = new THREE.BoxGeometry(RTS.WALL_WIDTH, 3, RTS.WALL_DEPTH);
   const wallMarkerMat = new THREE.MeshBasicMaterial({ color: 0xb08a7a, transparent: true, opacity: 0.8 });
 
-  function addWallMarker(id, z) {
+  function addWallMarker(id, progress) {
     const mesh = new THREE.Mesh(wallMarkerGeo, wallMarkerMat.clone());
-    mesh.position.set(0, 5, z);
+    const pt = map.getTrackPoint(progress);
+    const tan = map.getTrackTangent(progress);
+    const angle = Math.atan2(tan.x, tan.z);
+    mesh.position.set(pt.x, 5, pt.z);
+    mesh.rotation.y = angle;
     scene.add(mesh);
     wallMarkers.set(id, mesh);
   }
@@ -235,7 +239,6 @@ export async function initRTS() {
     timeVal.textContent = m + ":" + String(s).padStart(2, "0");
 
     // Update cart position on map
-    const cartZ = THREE.MathUtils.lerp(WORLD.TRACK_START, WORLD.TRACK_END, state.cartProgress);
     map.cart.p = state.cartProgress;
     map.setCar();
   }
@@ -263,8 +266,13 @@ export async function initRTS() {
     // Update spawn preview position
     raycaster.setFromCamera(mouse, camera);
     if (raycaster.ray.intersectPlane(groundPlane, intersectPoint)) {
-      const previewX = selectedAbility === "wall" ? 0 : intersectPoint.x;
-      spawnPreview.position.set(previewX, 1, intersectPoint.z);
+      if (selectedAbility === "wall") {
+        const snap = map.nearestTrackProgress(intersectPoint.x, intersectPoint.z);
+        const pt = map.getTrackPoint(snap.t);
+        spawnPreview.position.set(pt.x, 1, pt.z);
+      } else {
+        spawnPreview.position.set(intersectPoint.x, 1, intersectPoint.z);
+      }
       spawnPreview.visible = room && room.state && room.state.phase === "playing";
     }
   });
@@ -281,7 +289,7 @@ export async function initRTS() {
 
     const x = intersectPoint.x;
     const z = intersectPoint.z;
-    if (Math.abs(x) > 140 || Math.abs(z) > 140) {
+    if (Math.abs(x) > 250 || Math.abs(z) > 250) {
       rtsMsg("Out of bounds!", 1);
       return;
     }
@@ -297,13 +305,14 @@ export async function initRTS() {
         rtsMsg("Wall cooldown: " + remaining + "s", 0.8);
         return;
       }
-      // Snap to track — must be within track Z range
-      if (z > WORLD.TRACK_START || z < WORLD.TRACK_END) {
+      // Snap to track — must be close to the track
+      const snap = map.nearestTrackProgress(x, z);
+      if (snap.dist > 20) {
         rtsMsg("Place wall on the track!", 1);
         return;
       }
       lastWallSpawnTime = now;
-      room.send("spawnWall", { z });
+      room.send("spawnWall", { progress: snap.t });
       return;
     }
 
@@ -395,7 +404,7 @@ export async function initRTS() {
 
     // Wall spawned
     room.onMessage("wallSpawn", (data) => {
-      addWallMarker(data.id, data.z);
+      addWallMarker(data.id, data.progress);
     });
 
     // Wall destroyed
@@ -527,17 +536,28 @@ export async function initRTS() {
 
     // Camera panning
     let px = 0, pz = 0;
-    if (keys.has("KeyW") || keys.has("ArrowUp")) pz -= 1;
-    if (keys.has("KeyS") || keys.has("ArrowDown")) pz += 1;
-    if (keys.has("KeyA") || keys.has("ArrowLeft")) px -= 1;
-    if (keys.has("KeyD") || keys.has("ArrowRight")) px += 1;
+    if (keys.has("KeyW")) pz -= 1;
+    if (keys.has("KeyS")) pz += 1;
+    if (keys.has("KeyA")) px -= 1;
+    if (keys.has("KeyD")) px += 1;
+
+    // Arrow up/down for zoom
+    const ZOOM_KEY_SPEED = 1.5;
+    if (keys.has("ArrowUp")) {
+      zoom = Math.min(ZOOM_MAX, zoom + ZOOM_KEY_SPEED * dt);
+      updateCamera();
+    }
+    if (keys.has("ArrowDown")) {
+      zoom = Math.max(ZOOM_MIN, zoom - ZOOM_KEY_SPEED * dt);
+      updateCamera();
+    }
     if (px || pz) {
       const len = Math.hypot(px, pz);
       camX += (px / len) * PAN_SPEED * dt / zoom;
       camZ += (pz / len) * PAN_SPEED * dt / zoom;
       // Clamp to map bounds
-      camX = Math.max(-160, Math.min(160, camX));
-      camZ = Math.max(-160, Math.min(160, camZ));
+      camX = Math.max(-270, Math.min(270, camX));
+      camZ = Math.max(-270, Math.min(270, camZ));
       updateCamera();
     }
 

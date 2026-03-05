@@ -15,7 +15,7 @@ export async function initGame() {
   const skyTex = new THREE.TextureLoader().load("./assets/sky.png");
   skyTex.colorSpace = THREE.SRGBColorSpace;
   scene.background = skyTex;
-  scene.fog = new THREE.Fog(0x2d1f16, 26, 300);
+  scene.fog = new THREE.Fog(0x2d1f16, 26, 450);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(innerWidth, innerHeight);
@@ -28,7 +28,7 @@ export async function initGame() {
   sun.position.set(120, 180, 30);
   scene.add(sun);
 
-  const map = createWorld(scene);
+  const map = await createWorld(scene);
   const weaponView = await createWeaponView(scene, ASSETS);
 
   // ── Alien-bug model + texture pre-load ──────────────────────────────────
@@ -278,7 +278,7 @@ export async function initGame() {
   nestWallTex.repeat.set(2, 1);
   nestWallTex.colorSpace = THREE.SRGBColorSpace;
 
-  function spawnWall(id, z, hp) {
+  function spawnWall(id, progress, hp) {
     const geo = new THREE.BoxGeometry(RTS.WALL_WIDTH, RTS.WALL_HEIGHT, RTS.WALL_DEPTH);
     const mat = new THREE.MeshStandardMaterial({
       map: nestWallTex,
@@ -288,13 +288,17 @@ export async function initGame() {
       emissiveIntensity: 0.6,
     });
     const mesh = new THREE.Mesh(geo, mat);
-    const y = map.gy(0, z);
-    mesh.position.set(0, y + RTS.WALL_HEIGHT / 2, z);
+    const pt = map.getTrackPoint(progress);
+    const tan = map.getTrackTangent(progress);
+    const angle = Math.atan2(tan.x, tan.z);
+    const y = map.gy(pt.x, pt.z);
+    mesh.position.set(pt.x, y + RTS.WALL_HEIGHT / 2, pt.z);
+    mesh.rotation.y = angle;
     mesh.userData.isWall = true;
     mesh.userData.wallId = id;
     map.world.add(mesh);
     targets.push(mesh);
-    const w = { id, mesh, mat, hp, maxHp: hp, z };
+    const w = { id, mesh, mat, hp, maxHp: hp, progress };
     walls.push(w);
     // Add as AABB collider so players/enemies can't walk through
     const aabb = new THREE.Box3().setFromObject(mesh);
@@ -329,19 +333,6 @@ export async function initGame() {
     rebuildRayTargets();
   }
 
-  function getWallBlockZ() {
-    // Return the highest Z (closest to start) wall that blocks the cart
-    let blockZ = null;
-    for (const w of walls) {
-      // Cart moves from TRACK_START (high Z) toward TRACK_END (low Z)
-      // Wall blocks if the cart hasn't passed it yet
-      const cartZ = THREE.MathUtils.lerp(WORLD.TRACK_START, WORLD.TRACK_END, map.cart.p);
-      if (w.z < cartZ) {
-        if (blockZ === null || w.z > blockZ) blockZ = w.z;
-      }
-    }
-    return blockZ;
-  }
   // ──────────────────────────────────────────────────────────────────────
 
   function rebuildRayTargets() {
@@ -462,7 +453,7 @@ export async function initGame() {
   function spawnAlienBug() {
     const a = Math.random() * Math.PI * 2;
     const r = 7 + Math.random() * 6;
-    const x = Math.cos(a) * r;
+    const x = WORLD.NEST_X + Math.cos(a) * r;
     const z = WORLD.NEST_Z + Math.sin(a) * r;
     const isAcid = Math.random() < 0.15;
     const hp = isAcid ? RTS.ACID_BUG_HP : (58 + game.deaths * 12 + Math.random() * 20);
@@ -842,7 +833,7 @@ export async function initGame() {
   function spawnAlienBugCoop() {
     const a = Math.random() * Math.PI * 2;
     const r = 7 + Math.random() * 6;
-    const x = Math.cos(a) * r;
+    const x = WORLD.NEST_X + Math.cos(a) * r;
     const z = WORLD.NEST_Z + Math.sin(a) * r;
     const isAcid = Math.random() < 0.15;
     const hp = isAcid ? RTS.ACID_BUG_HP : (58 + game.deaths * 12 + Math.random() * 20);
@@ -892,11 +883,11 @@ export async function initGame() {
 
     if (!game.win) {
       if (near && !game.resp) {
-        map.cart.p += (map.cart.fwd * dt) / (WORLD.TRACK_START - WORLD.TRACK_END);
+        map.cart.p += (map.cart.fwd * dt) / map.trackLength;
         ui.setStatus("Escorting car to nest");
       } else if (game.resp && !isMultiplayer) {
         // Only roll back in singleplayer — in multiplayer another player may be pushing
-        map.cart.p -= (map.cart.back * dt) / (WORLD.TRACK_START - WORLD.TRACK_END);
+        map.cart.p -= (map.cart.back * dt) / map.trackLength;
         ui.setStatus("Car rolling back - spawn rate rising");
       } else if (!near && !game.resp) {
         ui.setStatus("Get closer");
@@ -911,12 +902,10 @@ export async function initGame() {
       }
     }
 
-    // Block cart at wall positions
+    // Block cart at wall positions (progress-based)
     for (const w of walls) {
-      // Convert wall Z to progress value
-      const wallP = (WORLD.TRACK_START - w.z) / (WORLD.TRACK_START - WORLD.TRACK_END);
-      if (map.cart.p >= wallP - 0.005) {
-        map.cart.p = Math.min(map.cart.p, wallP - 0.005);
+      if (map.cart.p >= w.progress - 0.005) {
+        map.cart.p = Math.min(map.cart.p, w.progress - 0.005);
         if (near && !game.resp) ui.setStatus("Wall blocking the cart - destroy it!");
       }
     }
@@ -1680,7 +1669,7 @@ export async function initGame() {
     // Wall spawned by commander
     room.onMessage("wallSpawn", (data) => {
       console.log("[network] Wall spawned:", data.id);
-      spawnWall(data.id, data.z, data.hp);
+      spawnWall(data.id, data.progress, data.hp);
     });
 
     // Wall took damage from another player
