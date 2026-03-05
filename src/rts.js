@@ -369,7 +369,7 @@ export async function initRTS() {
       room = await connectToGame("rts");
     }
     console.log("[rts] Connected as Commander");
-    overlayStatus.textContent = "Waiting for Shooter...";
+    overlayStatus.textContent = "Waiting for Shooter to start...";
 
     room.onMessage("roleAssign", (data) => {
       if (data.role === "fps") {
@@ -378,17 +378,6 @@ export async function initRTS() {
         window.location.href = "/shooter_v2.html";
         return;
       }
-    });
-
-    // Countdown display
-    room.onMessage("countdown", (data) => {
-      overlayStatus.textContent = "Starting in " + data.seconds + "s";
-    });
-
-    // Cannot start (RTS only, no shooter)
-    room.onMessage("cannotStart", (data) => {
-      overlayStatus.textContent = data.reason || "Need a Shooter to start";
-      rtsMsg("NEED A SHOOTER!", 3);
     });
 
     room.onMessage("gameStart", (data) => {

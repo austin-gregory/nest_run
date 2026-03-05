@@ -79,6 +79,9 @@ export async function initGame() {
     fa: 0.35,
   };
 
+  let smoothCamY = player.pos.y; // smoothed camera Y to avoid terrain jitter
+  let smoothGroundY = map.gy(player.pos.x, player.pos.z); // smoothed terrain height
+
   const game = { win: false, started: false, deaths: 0, kills: 0, resp: false, respT: 0, spawnT: 0, deathRoll: 0, elapsed: 0, startTime: 0 };
   const weapon = {
     rate: 11.2,
@@ -129,6 +132,12 @@ export async function initGame() {
     if (input.keys.has("KeyS")) out.sub(fwd);
     if (input.keys.has("KeyD")) out.add(right);
     if (input.keys.has("KeyA")) out.sub(right);
+    // Gamepad left stick movement
+    const gp = input.gamepad;
+    if (gp.connected) {
+      if (gp.moveY !== 0) out.addScaledVector(fwd, -gp.moveY);
+      if (gp.moveX !== 0) out.addScaledVector(right, gp.moveX);
+    }
     if (out.lengthSq() > 0) out.normalize();
     return out;
   }
@@ -149,7 +158,10 @@ export async function initGame() {
     player.vel.z *= k;
   }
   function collidePlayer() {
-    const y = map.gy(player.pos.x, player.pos.z);
+    const rawY = map.gy(player.pos.x, player.pos.z);
+    // Smooth terrain height to prevent jitter on uneven ground
+    smoothGroundY += (rawY - smoothGroundY) * Math.min(1, 25 * lastDt);
+    const y = smoothGroundY;
     if (player.pos.y < y + player.height) {
       player.pos.y = y + player.height;
       if (player.vel.y < 0) player.vel.y = 0;
@@ -195,6 +207,15 @@ export async function initGame() {
     new THREE.MeshBasicMaterial({ color: 0x00dd44 }),
     new THREE.MeshBasicMaterial({ color: 0x33ff55 }),
     new THREE.MeshBasicMaterial({ color: 0x007a18 }),
+  ];
+
+  // Acid bug mouth particles — subtle green wisps
+  const ACID_PARTICLE_COUNT = 5;
+  const acidParticleGeo = new THREE.SphereGeometry(0.02, 4, 4);
+  const acidParticleMats = [
+    new THREE.MeshBasicMaterial({ color: 0x00dd44, transparent: true, opacity: 0.5 }),
+    new THREE.MeshBasicMaterial({ color: 0x33ff55, transparent: true, opacity: 0.4 }),
+    new THREE.MeshBasicMaterial({ color: 0x00aa22, transparent: true, opacity: 0.45 }),
   ];
   function spawnAcidGore(pos) {
     const chunks = 7;
@@ -422,6 +443,25 @@ export async function initGame() {
     const m = mkAlienBug();
     m.g.position.set(x, map.gy(x, z), z);
     map.world.add(m.g);
+    // Create acid mouth particles for acid bugs
+    let acidParticles = null;
+    if (bugType === "acid") {
+      acidParticles = [];
+      const headBone = m.model.getObjectByName("Head");
+      const anchor = headBone || m.model;
+      for (let i = 0; i < ACID_PARTICLE_COUNT; i++) {
+        const mat = acidParticleMats[i % acidParticleMats.length].clone();
+        const p = new THREE.Mesh(acidParticleGeo, mat);
+        // Random phase offset so particles drift independently
+        p.userData.phase = Math.random() * Math.PI * 2;
+        p.userData.speed = 0.3 + Math.random() * 0.4;
+        p.userData.radius = 0.04 + Math.random() * 0.04;
+        p.userData.life = Math.random(); // 0-1 normalized lifetime
+        anchor.add(p);
+        acidParticles.push(p);
+      }
+    }
+
     enemies.push({
       mesh: m.g,
       mixer: m.mixer,
@@ -433,6 +473,7 @@ export async function initGame() {
       networkId,
       hp,
       bugType: bugType || "basic",
+      acidParticles,
       vel: new THREE.Vector3(),
       yaw: Math.random() * Math.PI * 2,
       s: speed,
@@ -503,7 +544,7 @@ export async function initGame() {
 
   function aimDir(out) {
     out.set(0, 0, -1).applyQuaternion(camera.quaternion);
-    const spread = input.pointer.aim ? weapon.ads : weapon.hip;
+    const spread = (input.pointer.aim || input.gamepad.aim) ? weapon.ads : weapon.hip;
     out.x += (Math.random() - 0.5) * spread;
     out.y += (Math.random() - 0.5) * spread;
     out.z += (Math.random() - 0.5) * spread;
@@ -653,15 +694,16 @@ export async function initGame() {
   // ──────────────────────────────────────────────────────────────────────
 
   function shoot() {
-    if (!input.pointer.locked || game.win || game.resp || !game.started) return;
+    if (!(input.pointer.locked || input.gamepad.connected) || game.win || game.resp || !game.started) return;
     const now = performance.now() / 1000;
     if (now < weapon.can) return;
 
     weapon.can = now + 1 / weapon.rate;
 
-    const recoilMul = input.pointer.aim ? 0.72 : 1;
+    const isAiming = input.pointer.aim || input.gamepad.aim;
+    const recoilMul = isAiming ? 0.72 : 1;
     player.pitch = clamp(player.pitch + weapon.rp * recoilMul, -1.45, 1.45);
-    player.yaw += (Math.random() * 2 - 1) * weapon.ry * (input.pointer.aim ? 0.55 : 1);
+    player.yaw += (Math.random() * 2 - 1) * weapon.ry * (isAiming ? 0.55 : 1);
     weaponView.kick();
     muzzleFlashLife = 0.055;
     spawnShell();
@@ -851,6 +893,7 @@ export async function initGame() {
     game.resp = true;
     game.respT = 3;
     player.hp = 0;
+    weaponView.gun.visible = false;
     ui.setStatus("Killed - Respawning...");
     ui.banner("YOU WERE SHREDDED", 1.8);
     drawGunSplatter();
@@ -870,6 +913,9 @@ export async function initGame() {
     player.pitch = 0;
     player.height = 1.75;
     game.deathRoll = 0;
+    smoothCamY = player.pos.y;
+    smoothGroundY = map.gy(player.pos.x, player.pos.z);
+    weaponView.gun.visible = true;
     ui.setStatus("Respawned");
     ui.banner("BACK IN", 1);
     clearGunSplatter();
@@ -1046,6 +1092,28 @@ export async function initGame() {
       } else {
         en.mat.emissive.setHex(0);
         en.mat.emissiveIntensity = 0;
+      }
+
+      // Animate acid mouth particles — subtle drift upward around mouth
+      if (en.acidParticles) {
+        const t = performance.now() / 1000;
+        for (const p of en.acidParticles) {
+          p.userData.life += dt * p.userData.speed;
+          if (p.userData.life > 1) p.userData.life -= 1;
+          const life = p.userData.life;
+          const phase = p.userData.phase;
+          const rad = p.userData.radius;
+          // Orbit around mouth area, drift upward, fade in/out
+          p.position.set(
+            Math.sin(t * 1.5 + phase) * rad,
+            life * 0.12,
+            -0.08 + Math.cos(t * 1.2 + phase) * rad * 0.5
+          );
+          // Fade: peak in middle, invisible at edges
+          const fade = Math.sin(life * Math.PI);
+          p.material.opacity = fade * 0.5;
+          p.scale.setScalar(0.6 + fade * 0.6);
+        }
       }
 
       en.atk = Math.max(0, en.atk - dt);
@@ -1314,33 +1382,33 @@ export async function initGame() {
     const ctx = splatterCtx;
     const w = splatterCanvas.width;
     const h = splatterCanvas.height;
-    for (let i = 0; i < 11; i++) {
+    for (let i = 0; i < 30; i++) {
       const x = Math.random() * w;
       const y = Math.random() * h;
-      const r = 5 + Math.random() * 22;
-      const red = 100 + Math.floor(Math.random() * 50);
+      const r = 8 + Math.random() * 40;
+      const red = 90 + Math.floor(Math.random() * 60);
       ctx.beginPath();
-      ctx.ellipse(x, y, r, r * (0.6 + Math.random() * 0.7), Math.random() * Math.PI, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${red},0,0,${0.55 + Math.random() * 0.45})`;
+      ctx.ellipse(x, y, r, r * (0.5 + Math.random() * 0.8), Math.random() * Math.PI, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${red},0,0,${0.6 + Math.random() * 0.4})`;
       ctx.fill();
-      // small satellite drops
-      for (let j = 0; j < 3; j++) {
-        const sx = x + (Math.random() - 0.5) * r * 3;
-        const sy = y + (Math.random() - 0.5) * r * 3;
-        const sr = 2 + Math.random() * 6;
+      // satellite drops
+      for (let j = 0; j < 6; j++) {
+        const sx = x + (Math.random() - 0.5) * r * 4;
+        const sy = y + (Math.random() - 0.5) * r * 4;
+        const sr = 2 + Math.random() * 10;
         ctx.beginPath();
         ctx.arc(sx, sy, sr, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${red},0,0,${0.4 + Math.random() * 0.5})`;
+        ctx.fillStyle = `rgba(${red},0,0,${0.45 + Math.random() * 0.5})`;
         ctx.fill();
       }
       // drip
-      if (Math.random() > 0.45) {
-        const dripLen = 20 + Math.random() * 55;
+      if (Math.random() > 0.3) {
+        const dripLen = 30 + Math.random() * 90;
         ctx.beginPath();
         ctx.moveTo(x, y + r);
-        ctx.quadraticCurveTo(x + (Math.random() - 0.5) * 8, y + r + dripLen * 0.5, x + (Math.random() - 0.5) * 6, y + r + dripLen);
-        ctx.lineWidth = 1.5 + Math.random() * 3.5;
-        ctx.strokeStyle = `rgba(${red},0,0,${0.45 + Math.random() * 0.45})`;
+        ctx.quadraticCurveTo(x + (Math.random() - 0.5) * 10, y + r + dripLen * 0.5, x + (Math.random() - 0.5) * 8, y + r + dripLen);
+        ctx.lineWidth = 2 + Math.random() * 5;
+        ctx.strokeStyle = `rgba(${red},0,0,${0.5 + Math.random() * 0.45})`;
         ctx.stroke();
       }
     }
@@ -1404,12 +1472,14 @@ export async function initGame() {
   const hipOffset = new THREE.Vector3();
   const adsOffset = new THREE.Vector3();
   let last = performance.now() / 1000;
+  let lastDt = 0.016;
   let bob = 0;
   function loop() {
     requestAnimationFrame(loop);
     const t = performance.now() / 1000;
     const dt = Math.min(0.033, t - last);
     last = t;
+    lastDt = dt;
 
     if (!game.win) game.elapsed = t - game.startTime;
 
@@ -1435,8 +1505,12 @@ export async function initGame() {
     camera.rotation.x = player.pitch;
     camera.rotation.z = game.deathRoll;
 
+    // Poll gamepad state
+    input.pollGamepad(dt);
+    const gp = input.gamepad;
+
     wish(wishMove);
-    const sprint = input.keys.has("ShiftLeft") || input.keys.has("ShiftRight");
+    const sprint = input.keys.has("ShiftLeft") || input.keys.has("ShiftRight") || gp.sprint;
     const speed = player.ground ? (sprint ? player.ss : player.ws) : player.as;
 
     if (!game.resp && !game.win && game.started) {
@@ -1448,7 +1522,7 @@ export async function initGame() {
         accel(wishMove, speed, player.aa, dt);
       }
       player.vel.y -= player.g * dt;
-      if (player.ground && input.keys.has("Space")) {
+      if (player.ground && (input.keys.has("Space") || gp.jump)) {
         player.vel.y = player.j;
         player.ground = false;
       }
@@ -1475,17 +1549,22 @@ export async function initGame() {
     bob += (player.ground ? hs : hs * 0.2) * dt * 2.8;
     const by = player.ground ? Math.sin(bob) * 0.035 : 0;
     const bx = player.ground ? Math.cos(bob * 0.5) * 0.02 : 0;
-    camera.position.set(player.pos.x + bx, player.pos.y + by, player.pos.z);
+    // Smooth camera Y to prevent jitter on uneven terrain
+    const camYTarget = player.pos.y + by;
+    const camLerp = player.ground ? Math.min(1, 20 * dt) : 1;
+    smoothCamY += (camYTarget - smoothCamY) * camLerp;
+    camera.position.set(player.pos.x + bx, smoothCamY, player.pos.z);
 
     veil.style.opacity = game.resp ? (game.respT / 3) * 0.55 : 0;
 
-    const fov = input.pointer.aim ? 70 : sprint ? 100 : 94;
+    const aiming = input.pointer.aim || gp.aim;
+    const fov = aiming ? 30 : sprint ? 100 : 94;
     camera.fov += (fov - camera.fov) * Math.min(1, 12 * dt);
     camera.updateProjectionMatrix();
-    ui.setCrosshairAim(input.pointer.aim);
+    ui.setCrosshairAim(aiming);
 
-    const sway = input.pointer.aim ? 0.35 : 1;
-    const movingForward = input.keys.has("KeyW") && !input.keys.has("KeyS");
+    const sway = aiming ? 0.35 : 1;
+    const movingForward = (input.keys.has("KeyW") && !input.keys.has("KeyS")) || gp.moveY < -0.3;
     const swayFreqX = 2.1;
     const swayFreqY = movingForward ? 1.25 : 2;
     const swx = (Math.sin(t * swayFreqX) * 0.014 + bx * 0.8) * sway;
@@ -1495,7 +1574,7 @@ export async function initGame() {
     adsOffset.set(0.24 + swx * 0.4, 0.13 + swy * 0.4, -0.3);
     weaponView.gun.position.copy(camera.position);
     weaponView.gun.quaternion.copy(camera.quaternion);
-    weaponView.gun.position.add((input.pointer.aim ? adsOffset : hipOffset).clone().applyQuaternion(camera.quaternion));
+    weaponView.gun.position.add((aiming ? adsOffset : hipOffset).clone().applyQuaternion(camera.quaternion));
     weaponView.settle(dt);
     updateLaser();
 
@@ -1515,7 +1594,7 @@ export async function initGame() {
       muzzleFlashLight.intensity = 0;
     }
 
-    if (input.pointer.fire) shoot();
+    if (input.pointer.fire || gp.fire) shoot();
     for (let i = shells.length - 1; i >= 0; i--) {
       const s = shells[i];
       s.life -= dt;
@@ -1593,33 +1672,67 @@ export async function initGame() {
     mySessionId = room.sessionId;
     console.log("[network] Connected as FPS player, sessionId:", mySessionId);
 
-    // Show waiting overlay until game starts
+    // Show waiting overlay with start buttons
     waitingOverlay = document.createElement("div");
     waitingOverlay.style.cssText = [
       "position:fixed", "inset:0", "display:flex", "flex-direction:column",
       "align-items:center", "justify-content:center",
-      "background:rgba(0,0,0,0.75)", "z-index:999", "gap:14px",
+      "background:rgba(0,0,0,0.75)", "z-index:999", "gap:18px",
       "font-family:monospace",
     ].join(";");
-    const waitText = document.createElement("h2");
-    waitText.textContent = "Waiting for Commander...";
-    waitText.id = "wait-text";
-    waitText.style.cssText = "color:#00b4ff;font-size:32px;letter-spacing:3px;";
+    const waitPlayerCount = document.createElement("h2");
+    waitPlayerCount.id = "wait-player-count";
+    waitPlayerCount.textContent = "Shooters: 1/4";
+    waitPlayerCount.style.cssText = "color:#00b4ff;font-size:32px;letter-spacing:3px;";
+    const btnCoopStart = document.createElement("button");
+    btnCoopStart.id = "btn-coop-start";
+    btnCoopStart.textContent = "Start Solo";
+    btnCoopStart.style.cssText = [
+      "padding:16px 48px", "font-size:22px", "font-family:monospace",
+      "background:#c0000a", "color:#fff", "border:none", "border-radius:6px",
+      "cursor:pointer", "letter-spacing:3px",
+    ].join(";");
+    btnCoopStart.addEventListener("click", () => {
+      if (room) room.send("requestStart", { mode: "coop" });
+    });
+    const btnPvpStart = document.createElement("button");
+    btnPvpStart.id = "btn-pvp-start";
+    btnPvpStart.textContent = "Start PvP";
+    btnPvpStart.disabled = true;
+    btnPvpStart.style.cssText = [
+      "padding:16px 48px", "font-size:22px", "font-family:monospace",
+      "background:#333", "color:#666", "border:none", "border-radius:6px",
+      "cursor:not-allowed", "letter-spacing:3px",
+    ].join(";");
+    btnPvpStart.addEventListener("click", () => {
+      if (room && !btnPvpStart.disabled) room.send("requestStart", { mode: "pvp" });
+    });
     const waitSub = document.createElement("p");
-    waitSub.id = "wait-sub";
-    waitSub.textContent = "Share this room or wait for countdown";
+    waitSub.textContent = "Waiting for players to join...";
     waitSub.style.cssText = "color:#888;font-size:14px;";
-    const waitCountdown = document.createElement("p");
-    waitCountdown.id = "wait-countdown";
-    waitCountdown.textContent = "";
-    waitCountdown.style.cssText = "color:#f1c40f;font-size:24px;font-weight:700;letter-spacing:2px;";
-    waitingOverlay.append(waitText, waitSub, waitCountdown);
+    waitingOverlay.append(waitPlayerCount, btnCoopStart, btnPvpStart, waitSub);
     document.body.appendChild(waitingOverlay);
 
-    // Listen for countdown
-    room.onMessage("countdown", (data) => {
-      const el = document.getElementById("wait-countdown");
-      if (el) el.textContent = "Starting in " + data.seconds + "s";
+    // Listen for player count updates
+    room.onMessage("playerCount", (data) => {
+      const el = document.getElementById("wait-player-count");
+      if (el) el.textContent = "Shooters: " + data.fpsCount + "/4";
+      const coopBtn = document.getElementById("btn-coop-start");
+      if (coopBtn) coopBtn.textContent = data.fpsCount >= 2 ? "Start Co-op" : "Start Solo";
+      const pvpBtn = document.getElementById("btn-pvp-start");
+      if (pvpBtn) {
+        if (data.hasRts) {
+          pvpBtn.disabled = false;
+          pvpBtn.style.background = "#c0000a";
+          pvpBtn.style.color = "#fff";
+          pvpBtn.style.cursor = "pointer";
+        } else {
+          pvpBtn.disabled = true;
+          pvpBtn.style.background = "#333";
+          pvpBtn.style.color = "#666";
+          pvpBtn.style.cursor = "not-allowed";
+        }
+      }
     });
 
     // Listen for game start
@@ -1701,6 +1814,8 @@ export async function initGame() {
         myColorIndex = data.colorIndex;
         const sp = WORLD.SPAWN_POINTS[data.colorIndex] || WORLD.SPAWN_POINTS[0];
         player.pos.set(sp.x, map.gy(sp.x, sp.z) + player.height, sp.z);
+        smoothCamY = player.pos.y;
+        smoothGroundY = map.gy(sp.x, sp.z);
         player.yaw = sp.yaw;
       }
     });

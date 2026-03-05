@@ -88,7 +88,7 @@
     .slot{padding:2px 8px;border-radius:3px;font-size:11px;letter-spacing:1px}
     .slot.open{color:#00e87a;border:1px solid rgba(0,232,122,.3)}
     .slot.filled{color:#666;border:1px solid rgba(255,255,255,.08)}
-    .room-countdown{color:#f1c40f;font-size:12px;min-width:40px;text-align:right}
+
 
     .error-msg{color:#e84000;font-size:13px;min-height:18px;text-align:center}
   </style>
@@ -183,7 +183,6 @@ function renderRooms(rooms) {
     const rtsSlot = meta.hasRts ? "filled" : "open";
     const fpsLabel = fpsCount + "/4";
     const rtsLabel = meta.hasRts ? "FILLED" : "OPEN";
-    const countdown = meta.countdown != null ? meta.countdown + "s" : "";
 
     // Determine if this room is joinable for the selected role
     const roleBlocked = selectedRole
@@ -199,7 +198,6 @@ function renderRooms(rooms) {
       <div class="room-info">
         <span class="slot ${fpsSlot}">SHOOTERS: ${fpsLabel}</span>
         <span class="slot ${rtsSlot}">COMMANDER: ${rtsLabel}</span>
-        <span class="room-countdown">${countdown}</span>
       </div>
     `;
 

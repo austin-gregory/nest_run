@@ -21,8 +21,6 @@ const RTS = {
   WALL_COOLDOWN: 25,
 };
 
-const COUNTDOWN_SECONDS = 30;
-
 class GameRoom extends Room {
   onCreate(options) {
     this.maxClients = 5;
@@ -36,8 +34,6 @@ class GameRoom extends Room {
     this._walls = {};              // wallId -> { id, z, hp }
     this._disconnectTimers = {};   // sessionId -> timeout handle
     this._tickInterval = null;
-    this._autoStartTimer = null;
-    this._countdownRemaining = COUNTDOWN_SECONDS;
 
     // Room name from options
     const roomName = (options && options.roomName) || "Game Room";
@@ -47,7 +43,6 @@ class GameRoom extends Room {
       fpsCount: 0,
       hasRts: false,
       phase: "waiting",
-      countdown: COUNTDOWN_SECONDS,
     });
 
     // ── Message handlers ──────────────────────────────────────────────────
@@ -247,6 +242,26 @@ class GameRoom extends Room {
         delete this._walls[wall.id];
       }
     });
+
+    // FPS player requests game start
+    this.onMessage("requestStart", (client, data) => {
+      if (this.state.phase !== "waiting") return;
+      const p = this.state.players.get(client.sessionId);
+      if (!p || p.role !== "fps") return;
+
+      let fc = 0, hr = false;
+      this.state.players.forEach((pl) => {
+        if (pl.role === "fps") fc++;
+        if (pl.role === "rts") hr = true;
+      });
+
+      if (data.mode === "pvp") {
+        if (!hr) return;
+        this._startGame("multiplayer");
+      } else {
+        this._startGame(fc >= 2 ? "coop" : "singleplayer");
+      }
+    });
   }
 
   onJoin(client, options) {
@@ -294,24 +309,9 @@ class GameRoom extends Room {
       delete this._disconnectTimers[client.sessionId];
     }
 
-    // Update metadata
+    // Update metadata and broadcast player count
     this._updateMetadata();
-
-    // Check if FPS + RTS present
-    let nowFpsCount = 0, nowHasRts = false;
-    this.state.players.forEach((p) => {
-      if (p.role === "fps") nowFpsCount++;
-      if (p.role === "rts") nowHasRts = true;
-    });
-
-    if (nowFpsCount >= 1 && nowHasRts && this.state.phase === "waiting") {
-      // Both roles present — start immediately, cancel any countdown
-      this._cancelCountdown();
-      this._startGame("multiplayer");
-    } else if (this.state.phase === "waiting" && !this._autoStartTimer) {
-      // First joiner — start countdown
-      this._startCountdown();
-    }
+    this._broadcastPlayerCount();
   }
 
   async onLeave(client, consented) {
@@ -346,11 +346,8 @@ class GameRoom extends Room {
       if (this.state.phase === "playing") {
         this._checkFpsRemaining();
       } else if (this.state.phase === "waiting") {
-        // If no players left in waiting, cancel countdown
-        if (this.state.players.size === 0) {
-          this._cancelCountdown();
-        }
         this._updateMetadata();
+        this._broadcastPlayerCount();
       }
     }
   }
@@ -370,53 +367,18 @@ class GameRoom extends Room {
     if (this._tickInterval) {
       clearInterval(this._tickInterval);
     }
-    this._cancelCountdown();
     for (const key of Object.keys(this._disconnectTimers)) {
       clearTimeout(this._disconnectTimers[key]);
     }
   }
 
-  _startCountdown() {
-    this._countdownRemaining = COUNTDOWN_SECONDS;
-    this._autoStartTimer = setInterval(() => {
-      this._countdownRemaining--;
-      this.broadcast("countdown", { seconds: this._countdownRemaining });
-      this._updateMetadata();
-
-      if (this._countdownRemaining <= 0) {
-        this._cancelCountdown();
-        this._resolveAutoStart();
-      }
-    }, 1000);
-  }
-
-  _cancelCountdown() {
-    if (this._autoStartTimer) {
-      clearInterval(this._autoStartTimer);
-      this._autoStartTimer = null;
-    }
-    this._countdownRemaining = COUNTDOWN_SECONDS;
-  }
-
-  _resolveAutoStart() {
+  _broadcastPlayerCount() {
     let fpsCount = 0, hasRts = false;
     this.state.players.forEach((p) => {
       if (p.role === "fps") fpsCount++;
       if (p.role === "rts") hasRts = true;
     });
-
-    if (fpsCount >= 1 && hasRts) {
-      this._startGame("multiplayer");
-    } else if (fpsCount >= 2) {
-      this._startGame("coop");
-    } else if (fpsCount >= 1) {
-      this._startGame("singleplayer");
-    } else {
-      // RTS only — can't start without a shooter
-      this.broadcast("cannotStart", { reason: "Need a Shooter to start the game" });
-      // Restart countdown
-      this._startCountdown();
-    }
+    this.broadcast("playerCount", { fpsCount, hasRts });
   }
 
   _startGame(mode) {
@@ -455,7 +417,6 @@ class GameRoom extends Room {
       clearInterval(this._tickInterval);
       this._tickInterval = null;
     }
-    this._cancelCountdown();
     this.broadcast("gameOver", { winner });
     this._updateMetadata();
 
@@ -477,7 +438,6 @@ class GameRoom extends Room {
       fpsCount,
       hasRts,
       phase: this.state.phase,
-      countdown: this._countdownRemaining,
     });
   }
 }
