@@ -4,5 +4,9 @@
   "private": true,
   "scripts": {
     "start": "node server.js"
+  },
+  "dependencies": {
+    "colyseus": "^0.15.0",
+    "@colyseus/ws-transport": "^0.15.0"
   }
 }

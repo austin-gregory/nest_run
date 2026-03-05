@@ -6,6 +6,13 @@ export const WORLD = {
   NEST_Z: -120,
   TRACK_START: 112,
   TRACK_END: -112,
+  SPAWN_POINTS: [
+    { x: -3.5, z: 116, yaw: 0 },
+    { x: 3.5,  z: 116, yaw: 0 },
+    { x: -3.5, z: 122, yaw: 0 },
+    { x: 3.5,  z: 122, yaw: 0 },
+  ],
+  FPS_COLORS: [0x00cc44, 0x2288ff, 0xddcc00, 0xff8800],
 };
 
 export const ASSETS = {
@@ -23,4 +30,15 @@ export const ASSETS = {
   gunScale: 0.14,
   // Euler rotation in radians to orient imported weapon model.
   gunRotation: { x: 0, y: Math.PI + 0.11, z: 0 },
+};
+
+export const RTS = {
+  BIOMASS_START: 100,
+  BIOMASS_MAX: 200,
+  BIOMASS_REGEN: 8,
+  BASIC_BUG_COST: 20,
+  BASIC_BUG_HP: 70,
+  BASIC_BUG_SPEED: 6,
+  SPAWN_COOLDOWN: 0.5,
+  TIME_LIMIT: 600,
 };

@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Nest Run — Lobby</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html,body{width:100%;height:100%;background:#05070a;color:#fff;font-family:'Courier New',Courier,monospace;overflow:auto}
+
+    #lobby{
+      max-width:700px;margin:0 auto;padding:40px 20px;
+      display:flex;flex-direction:column;align-items:center;gap:28px;
+    }
+
+    h1{
+      font-size:48px;letter-spacing:8px;color:#00b4ff;
+      text-shadow:0 0 30px rgba(0,180,255,.3);
+      margin-bottom:0;
+    }
+    .subtitle{font-size:13px;color:#556;letter-spacing:.2em;text-transform:uppercase}
+
+    /* ── Role selector ─────────────────────────────────────── */
+    .role-section{
+      display:flex;flex-direction:column;align-items:center;gap:10px;
+      width:100%;
+    }
+    .role-label{font-size:11px;letter-spacing:.2em;color:rgba(0,190,255,.5);text-transform:uppercase}
+    .role-btns{display:flex;gap:12px}
+    .role-btn{
+      padding:14px 32px;font-size:16px;font-family:inherit;
+      background:rgba(255,255,255,.04);color:#aaa;
+      border:1px solid rgba(255,255,255,.12);border-radius:6px;
+      cursor:pointer;letter-spacing:3px;transition:all .15s;
+    }
+    .role-btn:hover{background:rgba(0,180,255,.08);border-color:rgba(0,180,255,.3);color:#fff}
+    .role-btn.active{
+      background:rgba(0,180,255,.15);border-color:#00b4ff;color:#00e0ff;
+      box-shadow:0 0 16px rgba(0,180,255,.2);
+    }
+
+    /* ── Create room ───────────────────────────────────────── */
+    .create-section{
+      display:flex;flex-direction:column;align-items:center;gap:10px;
+      width:100%;
+    }
+    .create-row{display:flex;gap:10px;align-items:center}
+    .create-input{
+      padding:10px 14px;font-size:14px;font-family:inherit;
+      background:rgba(255,255,255,.04);color:#fff;
+      border:1px solid rgba(255,255,255,.12);border-radius:4px;
+      outline:none;width:240px;letter-spacing:1px;
+    }
+    .create-input::placeholder{color:#445}
+    .create-input:focus{border-color:rgba(0,180,255,.4)}
+    .create-btn{
+      padding:10px 24px;font-size:14px;font-family:inherit;
+      background:#c0000a;color:#fff;border:none;border-radius:4px;
+      cursor:pointer;letter-spacing:3px;transition:background .15s;
+    }
+    .create-btn:hover{background:#e0101a}
+    .create-btn:disabled{background:#333;color:#666;cursor:not-allowed}
+
+    /* ── Room list ─────────────────────────────────────────── */
+    .rooms-section{
+      width:100%;
+      background:rgba(2,10,22,.7);
+      border:1px solid rgba(0,180,255,.15);border-radius:6px;
+      padding:16px;
+    }
+    .rooms-header{
+      font-size:11px;letter-spacing:.2em;color:rgba(0,190,255,.5);
+      text-transform:uppercase;margin-bottom:12px;
+    }
+    .rooms-empty{color:#445;font-size:13px;text-align:center;padding:20px 0}
+    .room-item{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:10px 14px;margin-bottom:6px;
+      background:rgba(255,255,255,.02);
+      border:1px solid rgba(255,255,255,.06);border-radius:4px;
+      cursor:pointer;transition:all .15s;
+    }
+    .room-item:hover{background:rgba(0,180,255,.06);border-color:rgba(0,180,255,.2)}
+    .room-item.disabled{opacity:.35;cursor:not-allowed}
+    .room-item.disabled:hover{background:rgba(255,255,255,.02);border-color:rgba(255,255,255,.06)}
+    .room-name{font-size:14px;font-weight:700;letter-spacing:1px}
+    .room-info{display:flex;gap:14px;align-items:center;font-size:12px}
+    .slot{padding:2px 8px;border-radius:3px;font-size:11px;letter-spacing:1px}
+    .slot.open{color:#00e87a;border:1px solid rgba(0,232,122,.3)}
+    .slot.filled{color:#666;border:1px solid rgba(255,255,255,.08)}
+    .room-countdown{color:#f1c40f;font-size:12px;min-width:40px;text-align:right}
+
+    .error-msg{color:#e84000;font-size:13px;min-height:18px;text-align:center}
+  </style>
+</head>
+<body>
+<div id="lobby">
+  <h1>NEST RUN</h1>
+  <div class="subtitle">Choose your role and enter the battlefield</div>
+
+  <!-- Role selector -->
+  <div class="role-section">
+    <div class="role-label">Select Role</div>
+    <div class="role-btns">
+      <button class="role-btn" data-role="fps" id="btn-fps">SHOOTER</button>
+      <button class="role-btn" data-role="rts" id="btn-rts">COMMANDER</button>
+    </div>
+  </div>
+
+  <!-- Create room -->
+  <div class="create-section">
+    <div class="create-row">
+      <input class="create-input" id="room-name-input" type="text" placeholder="Room name (optional)" maxlength="30" />
+      <button class="create-btn" id="btn-create" disabled>CREATE ROOM</button>
+    </div>
+  </div>
+
+  <div class="error-msg" id="error-msg"></div>
+
+  <!-- Room list -->
+  <div class="rooms-section">
+    <div class="rooms-header">Available Rooms</div>
+    <div id="room-list">
+      <div class="rooms-empty">No rooms available. Create one!</div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { getAvailableRooms } from "./src/network.js";
+
+let selectedRole = null;
+
+const btnFps = document.getElementById("btn-fps");
+const btnRts = document.getElementById("btn-rts");
+const btnCreate = document.getElementById("btn-create");
+const roomNameInput = document.getElementById("room-name-input");
+const roomListEl = document.getElementById("room-list");
+const errorMsg = document.getElementById("error-msg");
+
+// ── Role selection ──────────────────────────────────────────────────────
+function selectRole(role) {
+  selectedRole = role;
+  btnFps.classList.toggle("active", role === "fps");
+  btnRts.classList.toggle("active", role === "rts");
+  btnCreate.disabled = false;
+  // Re-render room list to update greyed-out state
+  renderRooms(lastRooms);
+}
+
+btnFps.addEventListener("click", () => selectRole("fps"));
+btnRts.addEventListener("click", () => selectRole("rts"));
+
+// ── Create room ─────────────────────────────────────────────────────────
+btnCreate.addEventListener("click", () => {
+  if (!selectedRole) return;
+  const roomName = roomNameInput.value.trim() || "Game Room";
+  const page = selectedRole === "fps" ? "shooter_v2.html" : "rts.html";
+  const params = new URLSearchParams({ create: "true", roomName, role: selectedRole });
+  window.location.href = `/${page}?${params}`;
+});
+
+// ── Room list polling ───────────────────────────────────────────────────
+let lastRooms = [];
+
+function renderRooms(rooms) {
+  lastRooms = rooms;
+
+  // Only show waiting rooms
+  const waiting = rooms.filter(r => r.metadata && r.metadata.phase === "waiting");
+
+  if (waiting.length === 0) {
+    roomListEl.innerHTML = '<div class="rooms-empty">No rooms available. Create one!</div>';
+    return;
+  }
+
+  roomListEl.innerHTML = "";
+  for (const room of waiting) {
+    const meta = room.metadata || {};
+    const fpsCount = meta.fpsCount || 0;
+    const fpsFull = fpsCount >= 4;
+    const fpsSlot = fpsFull ? "filled" : "open";
+    const rtsSlot = meta.hasRts ? "filled" : "open";
+    const fpsLabel = fpsCount + "/4";
+    const rtsLabel = meta.hasRts ? "FILLED" : "OPEN";
+    const countdown = meta.countdown != null ? meta.countdown + "s" : "";
+
+    // Determine if this room is joinable for the selected role
+    const roleBlocked = selectedRole
+      ? (selectedRole === "fps" && fpsFull) || (selectedRole === "rts" && meta.hasRts)
+      : false;
+    const noRole = !selectedRole;
+    const disabled = roleBlocked || noRole;
+
+    const item = document.createElement("div");
+    item.className = "room-item" + (disabled ? " disabled" : "");
+    item.innerHTML = `
+      <div class="room-name">${escapeHtml(meta.roomName || "Game Room")}</div>
+      <div class="room-info">
+        <span class="slot ${fpsSlot}">SHOOTERS: ${fpsLabel}</span>
+        <span class="slot ${rtsSlot}">COMMANDER: ${rtsLabel}</span>
+        <span class="room-countdown">${countdown}</span>
+      </div>
+    `;
+
+    if (!disabled) {
+      item.addEventListener("click", () => {
+        const page = selectedRole === "fps" ? "shooter_v2.html" : "rts.html";
+        const params = new URLSearchParams({ roomId: room.roomId, role: selectedRole });
+        window.location.href = `/${page}?${params}`;
+      });
+    }
+
+    roomListEl.appendChild(item);
+  }
+}
+
+function escapeHtml(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function pollRooms() {
+  try {
+    const rooms = await getAvailableRooms();
+    renderRooms(rooms);
+    errorMsg.textContent = "";
+  } catch (err) {
+    errorMsg.textContent = "Failed to fetch rooms: " + (err.message || err);
+  }
+}
+
+pollRooms();
+setInterval(pollRooms, 2000);
+</script>
+</body>
+</html>

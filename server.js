@@ -1,10 +1,13 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { Server } = require("colyseus");
+const { WebSocketTransport } = require("@colyseus/ws-transport");
+const { GameRoom } = require("./src/server/GameRoom");
 
 const PORT = process.env.PORT || 8000;
 const ROOT = process.cwd();
-const DEFAULT_FILE = "shooter_v2.html";
+const DEFAULT_FILE = "index.html";
 
 // ── Leaderboard ────────────────────────────────────────────────────────────
 const SCORES_FILE = path.join(ROOT, "scores.json");
@@ -39,7 +42,7 @@ function send(res, status, body, type = "text/plain; charset=utf-8") {
   res.end(body);
 }
 
-const server = http.createServer((req, res) => {
+const httpServer = http.createServer((req, res) => {
   const urlPath = decodeURIComponent((req.url || "/").split("?")[0]);
 
   // GET /api/leaderboard
@@ -90,6 +93,15 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, () => {
+// ── Colyseus ─────────────────────────────────────────────────────────────
+const gameServer = new Server({
+  transport: new WebSocketTransport({ server: httpServer }),
+});
+
+gameServer.define("game", GameRoom).enableRealtimeListing();
+// ──────────────────────────────────────────────────────────────────────────
+
+httpServer.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}/${DEFAULT_FILE}`);
+  console.log(`Colyseus game room registered.`);
 });

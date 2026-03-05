@@ -1,9 +1,10 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
-import { ASSETS, WORLD } from "./constants.js";
+import { ASSETS, WORLD, RTS } from "./constants.js";
 import { createUI } from "./ui.js";
 import { attachInput } from "./input.js";
 import { createWorld } from "./world.js";
 import { createWeaponView } from "./weaponView.js";
+import { connectToGame, createRoom, joinRoom } from "./network.js";
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -313,16 +314,12 @@ export async function initGame() {
     }
   }
 
-  function spawnAlienBug() {
+  // ── Spawning ────────────────────────────────────────────────────────────
+  // Network-driven spawn (used in multiplayer)
+  function spawnAlienBugAt(networkId, x, z, hp, speed) {
     const m = mkAlienBug();
-    const a = Math.random() * Math.PI * 2;
-    const r = 7 + Math.random() * 6;
-    const x = Math.cos(a) * r;
-    const z = WORLD.NEST_Z + Math.sin(a) * r;
     m.g.position.set(x, map.gy(x, z), z);
     map.world.add(m.g);
-    const hp = 58 + game.deaths * 12 + Math.random() * 20;
-    const s = 5.4 + game.deaths * 0.25 + Math.random();
     enemies.push({
       mesh: m.g,
       mixer: m.mixer,
@@ -331,10 +328,11 @@ export async function initGame() {
       bodyProxy: m.bodyProxy,
       headProxy: m.headProxy,
       curAction: m.curAction,
+      networkId,
       hp,
       vel: new THREE.Vector3(),
       yaw: Math.random() * Math.PI * 2,
-      s,
+      s: speed,
       acc: 16,
       tr: 11,
       atk: 0,
@@ -347,6 +345,18 @@ export async function initGame() {
     rebuildRayTargets();
     hud();
   }
+
+  // Original singleplayer spawn (used as fallback)
+  function spawnAlienBug() {
+    const a = Math.random() * Math.PI * 2;
+    const r = 7 + Math.random() * 6;
+    const x = Math.cos(a) * r;
+    const z = WORLD.NEST_Z + Math.sin(a) * r;
+    const hp = 58 + game.deaths * 12 + Math.random() * 20;
+    const s = 5.4 + game.deaths * 0.25 + Math.random();
+    spawnAlienBugAt(null, x, z, hp, s);
+  }
+  // ────────────────────────────────────────────────────────────────────────
 
   function clearEnemies() {
     for (const e of enemies) {
@@ -417,6 +427,127 @@ export async function initGame() {
     laserLine.geometry.setFromPoints(laserPoints);
   }
 
+  // ── Other FPS players (human model) ──────────────────────────────────
+  const otherPlayers = new Map(); // sessionId → { group, model, gun }
+  const FPS_COLORS = WORLD.FPS_COLORS;
+
+  // Pre-load human + gun models (reuses GLTFLoader + SkeletonUtils already imported for bugs)
+  let humanGLTF = null, gunGLTF = null;
+  {
+    const [{ GLTFLoader }, su] = await Promise.all([
+      import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm"),
+      import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/SkeletonUtils.js/+esm"),
+    ]);
+    if (!skeletonClone) skeletonClone = su.clone;
+    const loader = new GLTFLoader();
+    [humanGLTF, gunGLTF] = await Promise.all([
+      loader.loadAsync("./assets/HumanBase.glb"),
+      loader.loadAsync("./assets/smg.glb"),
+    ]);
+  }
+
+  function createPlayerModel(colorIndex) {
+    const color = FPS_COLORS[colorIndex] || 0x00cc44;
+    const group = new THREE.Group();
+
+    // Clone only the male rig subtree
+    const maleRig = humanGLTF.scene.getObjectByName("basemesh_male_rig");
+    const model = skeletonClone(maleRig);
+    model.scale.setScalar(1.0);
+    model.rotation.y = Math.PI; // face forward
+
+    // Tint all meshes with the player's color
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
+    model.traverse((obj) => { if (obj.isMesh) obj.material = mat; });
+
+    group.add(model);
+
+    // Gun model attached to right hand bone
+    const gun = gunGLTF.scene.clone(true);
+    gun.scale.setScalar(0.14);
+    gun.rotation.set(0, Math.PI, 0);
+    const rightHand = model.getObjectByName("hand.R");
+    if (rightHand) {
+      gun.position.set(0, 0.05, 0);
+      rightHand.add(gun);
+    } else {
+      gun.position.set(0.55, 1.3, -0.3);
+      group.add(gun);
+    }
+
+    return { group, model, gun };
+  }
+
+  function syncOtherPlayers(state, mySessionId) {
+    const seen = new Set();
+    state.players.forEach((p, sid) => {
+      if (sid === mySessionId) return;
+      if (p.role !== "fps") return;
+      seen.add(sid);
+
+      let op = otherPlayers.get(sid);
+      if (!op) {
+        op = createPlayerModel(p.colorIndex);
+        op._tx = p.x; op._ty = p.y; op._tz = p.z;
+        op._tyaw = p.yaw; op._tpitch = p.pitch;
+        scene.add(op.group);
+        otherPlayers.set(sid, op);
+      }
+      // Update targets for lerp
+      op._tx = p.x;
+      op._ty = p.y;
+      op._tz = p.z;
+      op._tyaw = p.yaw;
+      op._tpitch = p.pitch;
+    });
+
+    // Remove players no longer in state
+    for (const [sid, op] of otherPlayers) {
+      if (!seen.has(sid)) {
+        scene.remove(op.group);
+        otherPlayers.delete(sid);
+      }
+    }
+  }
+
+  function lerpOtherPlayers(dt) {
+    const rate = Math.min(1, 12 * dt);
+    for (const [, op] of otherPlayers) {
+      const g = op.group;
+      g.position.x += (op._tx - g.position.x) * rate;
+      g.position.y += ((op._ty - 1.75) - g.position.y) * rate; // feet on ground
+      g.position.z += (op._tz - g.position.z) * rate;
+
+      // Yaw — rotate the model to face movement direction
+      let dyaw = op._tyaw - g.rotation.y;
+      dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
+      g.rotation.y += dyaw * rate;
+    }
+  }
+  // ──────────────────────────────────────────────────────────────────────
+
+  // ── Network state ──────────────────────────────────────────────────────
+  let room = null;
+  let isMultiplayer = false;
+  let networkSendTimer = 0;
+  let mySessionId = null;
+  let myColorIndex = 0;
+  let isEnemyHost = true; // am I the AI-host for enemies?
+  let isCoopMode = false; // coop = multiple shooters, no commander
+
+  function updateHostStatus() {
+    // Lowest colorIndex among connected FPS players is the host
+    if (!room || !room.state) { isEnemyHost = true; return; }
+    let lowestColor = myColorIndex;
+    room.state.players.forEach((p) => {
+      if (p.role === "fps" && p.colorIndex < lowestColor) {
+        lowestColor = p.colorIndex;
+      }
+    });
+    isEnemyHost = (lowestColor === myColorIndex);
+  }
+  // ──────────────────────────────────────────────────────────────────────
+
   function shoot() {
     if (!input.pointer.locked || game.win || game.resp) return;
     const now = performance.now() / 1000;
@@ -467,6 +598,15 @@ export async function initGame() {
     }
 
     spawnTracer(muzzle.clone(), finalHit.clone());
+
+    // Broadcast shot tracer to other players
+    if (room && isMultiplayer) {
+      room.send("playerShot", {
+        fx: muzzle.x, fy: muzzle.y, fz: muzzle.z,
+        tx: finalHit.x, ty: finalHit.y, tz: finalHit.z,
+      });
+    }
+
     if (!eRoot) return;
 
     const en = enemies.find((v) => v.mesh === eRoot);
@@ -488,6 +628,11 @@ export async function initGame() {
     enemies.splice(enemies.indexOf(en), 1);
     rebuildRayTargets();
     hud();
+
+    // Report kill to server
+    if (room && en.networkId) {
+      room.send("enemyKilled", { id: en.networkId });
+    }
   }
 
   function spawnShell() {
@@ -515,16 +660,41 @@ export async function initGame() {
     }
   }
 
+  // Singleplayer spawn logic (only used when not connected to multiplayer)
   const spawnInterval = () => Math.max(0.34, 2.2 - game.deaths * 0.3 - map.cart.p * 1.1);
   const maxEnemies = () => 12 + game.deaths * 4 + Math.floor(map.cart.p * 8);
 
   function spawnTick(dt) {
+    // In coop, only the enemy host spawns; in full multiplayer (with commander), skip
     if (game.win) return;
+    if (isMultiplayer && !isCoopMode) return;
+    if (isCoopMode && !isEnemyHost) return;
+
     game.spawnT -= dt;
     if (game.spawnT > 0) return;
     game.spawnT = spawnInterval();
     if (enemies.length >= maxEnemies()) return;
-    for (let i = 0; i < Math.min(1 + (game.deaths >= 2 ? 1 : 0), 3); i++) spawnAlienBug();
+    for (let i = 0; i < Math.min(1 + (game.deaths >= 2 ? 1 : 0), 3); i++) {
+      if (isCoopMode) {
+        spawnAlienBugCoop();
+      } else {
+        spawnAlienBug();
+      }
+    }
+  }
+
+  // Coop spawn: create enemy locally and register on server so it syncs
+  function spawnAlienBugCoop() {
+    const a = Math.random() * Math.PI * 2;
+    const r = 7 + Math.random() * 6;
+    const x = Math.cos(a) * r;
+    const z = WORLD.NEST_Z + Math.sin(a) * r;
+    const hp = 58 + game.deaths * 12 + Math.random() * 20;
+    const s = 5.4 + game.deaths * 0.25 + Math.random();
+    // Ask server to create and broadcast the enemy
+    if (room) {
+      room.send("coopSpawnEnemy", { x, z, hp, speed: s });
+    }
   }
 
   function killPlayer() {
@@ -567,11 +737,20 @@ export async function initGame() {
       if (near && !game.resp) {
         map.cart.p += (map.cart.fwd * dt) / (WORLD.TRACK_START - WORLD.TRACK_END);
         ui.setStatus("Escorting car to nest");
-      } else if (game.resp) {
+      } else if (game.resp && !isMultiplayer) {
+        // Only roll back in singleplayer — in multiplayer another player may be pushing
         map.cart.p -= (map.cart.back * dt) / (WORLD.TRACK_START - WORLD.TRACK_END);
         ui.setStatus("Car rolling back - spawn rate rising");
-      } else {
+      } else if (!near && !game.resp) {
         ui.setStatus("Get closer");
+      }
+    }
+
+    // In multiplayer, sync cart from server (server holds authoritative max)
+    if (isMultiplayer && room && room.state) {
+      const serverP = room.state.cartProgress;
+      if (!isNaN(serverP)) {
+        map.cart.p = Math.max(map.cart.p, serverP);
       }
     }
 
@@ -583,11 +762,65 @@ export async function initGame() {
       ui.banner("YOU WIN", 3);
       clearEnemies();
       nestExplosion();
+      if (room) {
+        room.send("win", {});
+      }
       setTimeout(showWinOverlay, 3500);
     }
   }
 
+  // Non-host clients lerp enemies toward server-authoritative positions
+  function enemySyncTick(dt) {
+    if (!room || !room.state) return;
+    const rate = Math.min(1, 15 * dt);
+    room.state.enemies.forEach((se, id) => {
+      const en = enemies.find((e) => e.networkId === id);
+      if (!en) return;
+      en.mesh.position.x += (se.x - en.mesh.position.x) * rate;
+      en.mesh.position.z += (se.z - en.mesh.position.z) * rate;
+      if (se.y) en.mesh.position.y += (se.y - en.mesh.position.y) * rate;
+      let dyaw = se.yaw - en.yaw;
+      dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
+      en.yaw += dyaw * rate;
+      en.mesh.rotation.y = en.yaw;
+      // Determine action from distance to local player
+      const dx = player.pos.x - en.mesh.position.x;
+      const dz = player.pos.z - en.mesh.position.z;
+      const dist = Math.hypot(dx, dz);
+      en.mixer.update(dt);
+      setEnemyAction(en, dist > 0.8 ? "run" : "attack");
+      // Hit flash
+      en.flash = Math.max(0, en.flash - dt);
+      if (en.flash > 0) {
+        en.mat.emissive.setHex(0x250404);
+        en.mat.emissiveIntensity = 1;
+      } else {
+        en.mat.emissive.setHex(0);
+        en.mat.emissiveIntensity = 0;
+      }
+      // Attack damage — still local so each player takes damage independently
+      en.atk = Math.max(0, en.atk - dt);
+      if (en.atk <= 0 && dist < 1.5 * BUG_SCALE) {
+        en.atk = 0.75;
+        const playerInSafe = Math.hypot(player.pos.x - WORLD.SPAWN_X, player.pos.z - WORLD.SPAWN_Z) <= WORLD.SPAWN_SAFE_RADIUS;
+        if (!game.resp && !playerInSafe) {
+          const dmgScale = 1 / (1 + enemies.length * 0.12);
+          player.hp -= (8 + Math.random() * 4 + game.deaths * 0.8) * dmgScale;
+          player.hp = Math.max(0, player.hp);
+          if (player.hp <= 0) killPlayer();
+          hud();
+        }
+      }
+    });
+  }
+
   function aiTick(dt, t) {
+    // Non-host clients don't run AI — they lerp from server state
+    if (isMultiplayer && !isEnemyHost) {
+      enemySyncTick(dt);
+      return;
+    }
+
     for (const en of enemies) {
       const dxSpawn = en.mesh.position.x - WORLD.SPAWN_X;
       const dzSpawn = en.mesh.position.z - WORLD.SPAWN_Z;
@@ -693,6 +926,45 @@ export async function initGame() {
       }
     }
   }
+
+  // ── Network send (10 Hz) ───────────────────────────────────────────────
+  function networkTick(dt) {
+    if (!room || !isMultiplayer) return;
+    networkSendTimer += dt;
+    if (networkSendTimer < 0.1) return;
+    networkSendTimer = 0;
+
+    // Send player state
+    room.send("playerUpdate", {
+      x: player.pos.x,
+      y: player.pos.y,
+      z: player.pos.z,
+      yaw: player.yaw,
+      pitch: player.pitch,
+      hp: player.hp,
+      cartProgress: map.cart.p,
+    });
+
+    // Only the enemy host sends positions (authoritative AI)
+    if (isEnemyHost && enemies.length > 0) {
+      const positions = [];
+      for (const en of enemies) {
+        if (en.networkId) {
+          positions.push({
+            id: en.networkId,
+            x: en.mesh.position.x,
+            y: en.mesh.position.y,
+            z: en.mesh.position.z,
+            yaw: en.yaw,
+          });
+        }
+      }
+      if (positions.length > 0) {
+        room.send("enemyPositions", positions);
+      }
+    }
+  }
+  // ────────────────────────────────────────────────────────────────────────
 
   rebuildRayTargets();
   hud();
@@ -836,9 +1108,39 @@ export async function initGame() {
     lbRows(lb, top3);
 
     const btn = makeOverlayBtn("PLAY AGAIN");
-    btn.onclick = () => location.reload();
+    btn.onclick = () => window.location.href = "/";
 
     ov.append(winTitle, stats, lb, btn);
+    document.body.appendChild(ov);
+  }
+
+  function showGameOver(winner) {
+    document.exitPointerLock();
+    game.win = true;
+    const ov = document.createElement("div");
+    ov.style.cssText = [
+      "position:fixed", "inset:0", "display:flex", "flex-direction:column",
+      "align-items:center", "justify-content:center",
+      "background:rgba(0,0,0,0.82)", "z-index:999", "gap:12px",
+      "font-family:monospace",
+    ].join(";");
+
+    const title = document.createElement("h1");
+    if (winner === "rts") {
+      title.textContent = "TIME'S UP - COMMANDER WINS";
+      title.style.cssText = "color:#e84000;font-size:42px;margin:0;letter-spacing:4px;";
+    } else if (winner === "disconnect") {
+      title.textContent = "OPPONENT DISCONNECTED";
+      title.style.cssText = "color:#888;font-size:42px;margin:0;letter-spacing:4px;";
+    } else {
+      title.textContent = "GAME OVER";
+      title.style.cssText = "color:#e84000;font-size:42px;margin:0;letter-spacing:4px;";
+    }
+
+    const btn = makeOverlayBtn("PLAY AGAIN");
+    btn.onclick = () => window.location.href = "/";
+
+    ov.append(title, btn);
     document.body.appendChild(ov);
   }
   // ──────────────────────────────────────────────────────────────────────
@@ -948,6 +1250,8 @@ export async function initGame() {
     carTick(dt);
     spawnTick(dt);
     aiTick(dt, t);
+    networkTick(dt);
+    lerpOtherPlayers(dt);
 
     const hs = Math.hypot(player.vel.x, player.vel.z);
     bob += (player.ground ? hs : hs * 0.2) * dt * 2.8;
@@ -1048,9 +1352,182 @@ export async function initGame() {
   renderer.render(scene, camera);
   playerName = await showStartScreen();
   ui.msg("Click the game to lock mouse.");
-  ui.banner("ESCORT THE CAR TO THE NEST", 2);
-  game.startTime = performance.now() / 1000;
-  last = performance.now() / 1000;
+
+  // ── Multiplayer connection ─────────────────────────────────────────────
+  const urlParams = new URLSearchParams(window.location.search);
+  const paramRoomId = urlParams.get("roomId");
+  const paramCreate = urlParams.get("create") === "true";
+  const paramRoomName = urlParams.get("roomName");
+  const paramRole = urlParams.get("role") || "fps";
+
+  let waitingOverlay = null;
+  try {
+    // Connect based on URL params
+    if (paramCreate) {
+      room = await createRoom(paramRole, paramRoomName || "Game Room");
+    } else if (paramRoomId) {
+      room = await joinRoom(paramRoomId, paramRole);
+    } else {
+      // Legacy: no params, joinOrCreate
+      room = await connectToGame("fps");
+    }
+    isMultiplayer = true;
+    mySessionId = room.sessionId;
+    console.log("[network] Connected as FPS player, sessionId:", mySessionId);
+
+    // Show waiting overlay until game starts
+    waitingOverlay = document.createElement("div");
+    waitingOverlay.style.cssText = [
+      "position:fixed", "inset:0", "display:flex", "flex-direction:column",
+      "align-items:center", "justify-content:center",
+      "background:rgba(0,0,0,0.75)", "z-index:999", "gap:14px",
+      "font-family:monospace",
+    ].join(";");
+    const waitText = document.createElement("h2");
+    waitText.textContent = "Waiting for Commander...";
+    waitText.id = "wait-text";
+    waitText.style.cssText = "color:#00b4ff;font-size:32px;letter-spacing:3px;";
+    const waitSub = document.createElement("p");
+    waitSub.id = "wait-sub";
+    waitSub.textContent = "Share this room or wait for countdown";
+    waitSub.style.cssText = "color:#888;font-size:14px;";
+    const waitCountdown = document.createElement("p");
+    waitCountdown.id = "wait-countdown";
+    waitCountdown.textContent = "";
+    waitCountdown.style.cssText = "color:#f1c40f;font-size:24px;font-weight:700;letter-spacing:2px;";
+    waitingOverlay.append(waitText, waitSub, waitCountdown);
+    document.body.appendChild(waitingOverlay);
+
+    // Listen for countdown
+    room.onMessage("countdown", (data) => {
+      const el = document.getElementById("wait-countdown");
+      if (el) el.textContent = "Starting in " + data.seconds + "s";
+    });
+
+    // Listen for game start
+    room.onMessage("gameStart", (data) => {
+      console.log("[network] Game started! Mode:", data.mode);
+      if (waitingOverlay && waitingOverlay.parentNode) {
+        document.body.removeChild(waitingOverlay);
+        waitingOverlay = null;
+      }
+      if (data.mode === "singleplayer") {
+        isMultiplayer = false;
+        ui.banner("SOLO MODE — ESCORT THE CAR TO THE NEST", 2.5);
+      } else if (data.mode === "coop") {
+        isCoopMode = true;
+        ui.banner("CO-OP MODE — ESCORT THE CAR TO THE NEST", 2.5);
+      } else {
+        ui.banner("COMMANDER HAS JOINED - GAME ON!", 2.5);
+      }
+      game.startTime = performance.now() / 1000;
+      last = performance.now() / 1000;
+    });
+
+    // Listen for enemy spawn commands from RTS player
+    room.onMessage("enemySpawn", (data) => {
+      console.log("[network] Spawning enemy:", data.id);
+      spawnAlienBugAt(data.id, data.x, data.z, data.hp, data.speed);
+    });
+
+    // Receive shot tracers from other players
+    room.onMessage("playerShot", (data) => {
+      const from = new THREE.Vector3(data.fx, data.fy, data.fz);
+      const to = new THREE.Vector3(data.tx, data.ty, data.tz);
+      spawnTracer(from, to);
+    });
+
+    // Listen for game over
+    room.onMessage("gameOver", (data) => {
+      console.log("[network] Game over:", data.winner);
+      showGameOver(data.winner);
+    });
+
+    // If we got assigned as RTS by mistake, redirect
+    room.onMessage("roleAssign", (data) => {
+      if (data.role === "rts") {
+        console.log("[network] Assigned RTS role, redirecting...");
+        room.leave();
+        window.location.href = "/rts.html";
+      }
+      // Use spawn point based on colorIndex
+      if (data.role === "fps" && data.colorIndex != null) {
+        myColorIndex = data.colorIndex;
+        const sp = WORLD.SPAWN_POINTS[data.colorIndex] || WORLD.SPAWN_POINTS[0];
+        player.pos.set(sp.x, map.gy(sp.x, sp.z) + player.height, sp.z);
+        player.yaw = sp.yaw;
+      }
+    });
+
+    // Sync other FPS player block models + enemy sync
+    room.onStateChange((state) => {
+      syncOtherPlayers(state, mySessionId);
+      updateHostStatus();
+
+      // Build set of local networkIds for comparison
+      const localIds = new Set();
+      for (const en of enemies) {
+        if (en.networkId) localIds.add(en.networkId);
+      }
+
+      // Build set of server enemy ids
+      const serverEnemyIds = new Set();
+      state.enemies.forEach((e, id) => { serverEnemyIds.add(id); });
+
+      // Remove local enemies that server has removed (killed by another player)
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const en = enemies[i];
+        if (en.networkId && !serverEnemyIds.has(en.networkId)) {
+          const bi = targets.indexOf(en.bodyProxy);
+          if (bi >= 0) targets.splice(bi, 1);
+          const hi = targets.indexOf(en.headProxy);
+          if (hi >= 0) targets.splice(hi, 1);
+          en.mixer.stopAllAction();
+          const gorePos = en.mesh.position.clone();
+          gorePos.y += BUG_SCALE * 0.55;
+          spawnGore(gorePos);
+          map.world.remove(en.mesh);
+          enemies.splice(i, 1);
+        }
+      }
+
+      // Re-create enemies that exist on server but not locally (e.g. after death clear)
+      state.enemies.forEach((e, id) => {
+        if (!localIds.has(id)) {
+          spawnAlienBugAt(id, e.x, e.z, e.hp, e.speed);
+        }
+      });
+
+      rebuildRayTargets();
+      hud();
+    });
+
+    // If game already started (we joined second), remove waiting overlay
+    if (room.state && room.state.phase === "playing") {
+      if (waitingOverlay && waitingOverlay.parentNode) {
+        document.body.removeChild(waitingOverlay);
+        waitingOverlay = null;
+      }
+      game.startTime = performance.now() / 1000;
+      last = performance.now() / 1000;
+    }
+
+  } catch (err) {
+    console.warn("[network] Connection failed, running singleplayer:", err);
+    isMultiplayer = false;
+    room = null;
+    if (waitingOverlay && waitingOverlay.parentNode) {
+      document.body.removeChild(waitingOverlay);
+    }
+  }
+
+  // If singleplayer (no connection), start immediately
+  if (!isMultiplayer) {
+    ui.banner("ESCORT THE CAR TO THE NEST", 2);
+    game.startTime = performance.now() / 1000;
+    last = performance.now() / 1000;
+  }
+
   loop();
 
   addEventListener("resize", () => {

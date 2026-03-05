@@ -198,6 +198,18 @@ export function createWorld(scene) {
     }
   }
 
+  // Load bomb model and place on top of cart
+  import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm")
+    .then(({ GLTFLoader }) => {
+      const loader = new GLTFLoader();
+      loader.loadAsync("./assets/bomb.glb").then((gltf) => {
+        const bomb = gltf.scene;
+        bomb.position.set(0, 2.2, 0); // on top of roof
+        bomb.rotation.y = Math.PI;
+        car.add(bomb);
+      });
+    });
+
   const cart = { p: 0, fwd: 7.5, back: 2.0, rad: 8.2 };
   const setCar = () => {
     const z = THREE.MathUtils.lerp(WORLD.TRACK_START, WORLD.TRACK_END, cart.p);

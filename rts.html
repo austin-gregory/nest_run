@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Nest Run — Commander</title>
+  <style>
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#05070a}
+    canvas{display:block}
+
+    /* ── RTS HUD ────────────────────────────────────────────── */
+    #rts-hud{
+      position:fixed;inset:0;pointer-events:none;
+      color:#fff;font-family:'Courier New',Courier,monospace;font-size:12px;
+    }
+
+    #rts-top{
+      position:absolute;top:10px;left:50%;transform:translateX(-50%);
+      display:flex;gap:18px;align-items:center;
+      background:rgba(2,10,22,.88);
+      border:1px solid rgba(0,180,255,.22);border-radius:4px;
+      padding:8px 18px;
+      box-shadow:0 0 28px rgba(0,140,255,.1);
+      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    }
+    .rts-stat{display:flex;flex-direction:column;align-items:center;gap:2px}
+    .rts-lbl{font-size:9px;letter-spacing:.2em;color:rgba(0,190,255,.5);text-transform:uppercase}
+    .rts-val{font-size:16px;font-weight:700;color:#fff}
+    .rts-val.bio{color:#00e87a}
+    .rts-val.time{color:#f1c40f}
+
+    #rts-bar-wrap{
+      position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
+      width:500px;max-width:90vw;
+      background:rgba(2,10,22,.88);
+      border:1px solid rgba(0,180,255,.22);border-radius:4px;
+      padding:10px 16px;
+      box-shadow:0 0 28px rgba(0,140,255,.1);
+      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    }
+    .bar-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+    .bar-row:last-child{margin-bottom:0}
+    .bar-label{font-size:9px;letter-spacing:.2em;color:rgba(0,190,255,.5);text-transform:uppercase;min-width:70px}
+    .bar-track{flex:1;height:6px;background:rgba(255,255,255,.06);border:1px solid rgba(0,180,255,.14);border-radius:3px;overflow:hidden}
+    .bar-fill{height:100%;border-radius:3px;transition:width .15s}
+    #bio-fill{background:linear-gradient(90deg,#00b860,#00e87a);box-shadow:0 0 8px rgba(0,232,122,.4)}
+    #cart-fill{background:linear-gradient(90deg,rgba(0,140,255,.6),rgba(0,220,255,.9));box-shadow:0 0 6px rgba(0,200,255,.3)}
+    .bar-val{font-size:12px;font-weight:700;min-width:38px;text-align:right}
+
+    #spawn-hint{
+      position:absolute;bottom:90px;left:50%;transform:translateX(-50%);
+      font-size:13px;color:rgba(0,190,255,.6);letter-spacing:.1em;
+      pointer-events:none;
+    }
+
+    #rts-msg{
+      position:absolute;left:50%;top:18%;transform:translate(-50%,-50%);
+      font-size:34px;font-weight:800;
+      background:rgba(0,0,0,.45);padding:8px 14px;border-radius:12px;
+      border:1px solid rgba(255,255,255,.1);
+      opacity:0;transition:opacity .15s;
+      pointer-events:none;
+    }
+
+    #rts-overlay{
+      position:fixed;inset:0;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;
+      background:rgba(0,0,0,0.87);z-index:999;gap:14px;
+      font-family:monospace;
+    }
+  </style>
+</head>
+<body>
+<div id="rts-hud">
+  <div id="rts-top">
+    <div class="rts-stat"><div class="rts-lbl">Biomass</div><div class="rts-val bio" id="bio-val">100</div></div>
+    <div class="rts-stat"><div class="rts-lbl">Enemies</div><div class="rts-val" id="enemy-count">0</div></div>
+    <div class="rts-stat"><div class="rts-lbl">Kills</div><div class="rts-val" id="kill-count">0</div></div>
+    <div class="rts-stat"><div class="rts-lbl">Cart</div><div class="rts-val" id="cart-pct">0%</div></div>
+    <div class="rts-stat"><div class="rts-lbl">Time</div><div class="rts-val time" id="time-val">10:00</div></div>
+  </div>
+
+  <div id="rts-bar-wrap">
+    <div class="bar-row">
+      <div class="bar-label">Biomass</div>
+      <div class="bar-track"><div id="bio-fill" class="bar-fill" style="width:50%"></div></div>
+      <div class="bar-val" id="bio-bar-val">100</div>
+    </div>
+    <div class="bar-row">
+      <div class="bar-label">Cart Progress</div>
+      <div class="bar-track"><div id="cart-fill" class="bar-fill" style="width:0%"></div></div>
+      <div class="bar-val" id="cart-bar-val">0%</div>
+    </div>
+  </div>
+
+  <div id="spawn-hint">Click on the map to spawn bugs (cost: 20 biomass)</div>
+  <div id="rts-msg"></div>
+</div>
+
+<div id="rts-overlay">
+  <h1 style="color:#00b4ff;font-size:52px;margin:0;letter-spacing:6px;">COMMANDER</h1>
+  <p style="color:#aaa;font-size:16px;margin:0;">Spawn alien bugs to stop the FPS player</p>
+  <p id="overlay-status" style="color:#fff;font-size:18px;margin:8px 0;">Connecting...</p>
+</div>
+
+<script type="module">
+import { initRTS } from "./src/rts.js";
+initRTS().catch((err) => {
+  console.error(err);
+  const st = document.getElementById("overlay-status");
+  if (st) st.textContent = `Error: ${err?.message || err}`;
+});
+</script>
+</body>
+</html>
