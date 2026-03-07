@@ -91,6 +91,7 @@
 
 
     .error-msg{color:#e84000;font-size:13px;min-height:18px;text-align:center}
+    .gp-focus{box-shadow:0 0 12px rgba(0,180,255,.7);border-color:#00b4ff !important;outline:none}
   </style>
 </head>
 <body>
@@ -231,6 +232,57 @@ async function pollRooms() {
 
 pollRooms();
 setInterval(pollRooms, 2000);
+
+// ── Gamepad navigation for lobby ──────────────────────────────────────
+(function lobbyGamepad() {
+  let focusIndex = 0;
+  let lastDpad = 0;
+  let lastA = false;
+  const REPEAT = 200;
+
+  function getFocusables() {
+    const items = [btnFps, btnRts, roomNameInput, btnCreate];
+    document.querySelectorAll(".room-item:not(.disabled)").forEach(el => items.push(el));
+    return items;
+  }
+
+  function highlight(list, i) {
+    list.forEach((el, j) => {
+      if (j === i) el.classList.add("gp-focus");
+      else el.classList.remove("gp-focus");
+    });
+  }
+
+  function loop() {
+    const gp = navigator.getGamepads ? navigator.getGamepads()[0] : null;
+    if (gp) {
+      const items = getFocusables();
+      if (focusIndex >= items.length) focusIndex = Math.max(0, items.length - 1);
+      const now = performance.now();
+      const upDown = (gp.buttons[13] && gp.buttons[13].pressed ? 1 : 0)
+                   - (gp.buttons[12] && gp.buttons[12].pressed ? 1 : 0);
+      const stickY = Math.abs(gp.axes[1]) > 0.5 ? Math.sign(gp.axes[1]) : 0;
+      const dir = upDown || stickY;
+      if (dir && now - lastDpad > REPEAT) {
+        focusIndex = (focusIndex + (dir > 0 ? 1 : items.length - 1)) % items.length;
+        highlight(items, focusIndex);
+        lastDpad = now;
+      } else if (!dir) {
+        lastDpad = 0;
+      }
+      const aPressed = gp.buttons[0] && gp.buttons[0].pressed;
+      if (aPressed && !lastA) {
+        const el = items[focusIndex];
+        if (el.tagName === "INPUT") el.focus();
+        else el.click();
+      }
+      lastA = aPressed;
+      highlight(items, focusIndex);
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
 </script>
 </body>
 </html>
