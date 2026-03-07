@@ -14,13 +14,13 @@ export const WORLD = {
   NEST_Z: -180,
   SPAWN_X: -120,
   SPAWN_Z: 180,
-  SPAWN_YAW: Math.PI,
+  SPAWN_YAW: 0,
   SPAWN_SAFE_RADIUS: 9,
   SPAWN_POINTS: [
-    { x: -123.5, z: 180, yaw: Math.PI },
-    { x: -116.5, z: 180, yaw: Math.PI },
-    { x: -123.5, z: 186, yaw: Math.PI },
-    { x: -116.5, z: 186, yaw: Math.PI },
+    { x: -123.5, z: 180, yaw: 0 },
+    { x: -116.5, z: 180, yaw: 0 },
+    { x: -123.5, z: 186, yaw: 0 },
+    { x: -116.5, z: 186, yaw: 0 },
   ],
   FPS_COLORS: [0x00cc44, 0x2288ff, 0xddcc00, 0xff8800],
 };
@@ -42,6 +42,17 @@ export const ASSETS = {
   gunRotation: { x: 0, y: Math.PI + 0.11, z: 0 },
 };
 
+export const FORCE_GUN_ASSETS = {
+  gunModelUrl: "./assets/gun.glb",
+  gunTextureUrl: null,
+  gunMuzzleNodeName: null,
+  gunSlideNodeName: null,
+  gunEjectNodeName: null,
+  gunSlideTravel: 0.04,
+  gunScale: 0.14,
+  gunRotation: { x: 0, y: Math.PI, z: 0 },
+};
+
 export const RTS = {
   BIOMASS_START: 100,
   BIOMASS_MAX: 200,
@@ -55,7 +66,7 @@ export const RTS = {
   ACID_BUG_HP: 50,
   ACID_BUG_SPEED: 7,
   ACID_BUG_COOLDOWN: 15,
-  ACID_BLIND_RADIUS: 18,
+  ACID_BLIND_RADIUS: 10,
   ACID_BLIND_DURATION: 6,
   WALL_COST: 80,
   WALL_HP: 1200,

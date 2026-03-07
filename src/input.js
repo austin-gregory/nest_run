@@ -1,4 +1,4 @@
-export function attachInput({ element, onReload, onLookDelta, onLockChange, lookSensitivity = 0.0022 }) {
+export function attachInput({ element, onReload, onSwapWeapon, onLookDelta, onLockChange, lookSensitivity = 0.0022 }) {
   const keys = new Set();
   const pointer = { locked: false, aim: false, fire: false };
 
@@ -14,6 +14,7 @@ export function attachInput({ element, onReload, onLookDelta, onLockChange, look
   addEventListener("keydown", (e) => {
     keys.add(e.code);
     if (e.code === "KeyR") onReload?.();
+    if (e.code === "KeyQ") onSwapWeapon?.();
   });
 
   addEventListener("keyup", (e) => {
@@ -61,6 +62,7 @@ export function attachInput({ element, onReload, onLookDelta, onLockChange, look
     reload: false,     // X
     _prevReload: false,
     _prevJump: false,
+    _prevSwap: false,
   };
 
   function applyDeadzone(value, deadzone) {
@@ -128,6 +130,12 @@ export function attachInput({ element, onReload, onLookDelta, onLockChange, look
     const xPressed = gp.buttons[2] ? gp.buttons[2].pressed : false;
     if (xPressed && !gamepad._prevReload) onReload?.();
     gamepad._prevReload = xPressed;
+
+    // Y = swap weapon (button 3) — edge-triggered
+    const yPressed = gp.buttons[3] ? gp.buttons[3].pressed : false;
+    gamepad.swap = yPressed && !gamepad._prevSwap;
+    if (gamepad.swap) onSwapWeapon?.();
+    gamepad._prevSwap = yPressed;
   }
 
   return { keys, pointer, gamepad, pollGamepad };

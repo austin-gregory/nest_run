@@ -1,5 +1,5 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
-import { ASSETS, WORLD, RTS } from "./constants.js";
+import { ASSETS, WORLD, RTS, FORCE_GUN_ASSETS } from "./constants.js";
 import { createUI } from "./ui.js";
 import { attachInput } from "./input.js";
 import { createWorld } from "./world.js";
@@ -30,6 +30,115 @@ export async function initGame() {
 
   const map = await createWorld(scene);
   const weaponView = await createWeaponView(scene, ASSETS);
+  const forceGunView = await createWeaponView(scene, FORCE_GUN_ASSETS);
+  forceGunView.gun.visible = false;
+
+  // ── Force gun checkpoint & weapon switching ─────────────────────────────
+  let activeWeapon = "smg";
+  let checkpointReached = false;
+  const checkpointPos = map.getTrackPoint(0.25);
+  const checkpointY = map.gy(checkpointPos.x, checkpointPos.z);
+  const checkpointRing = new THREE.Mesh(
+    new THREE.RingGeometry(0, 6, 48),
+    new THREE.MeshBasicMaterial({ color: 0x00b4ff, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
+  );
+  checkpointRing.rotation.x = -Math.PI / 2;
+  checkpointRing.position.set(checkpointPos.x, checkpointY + 0.08, checkpointPos.z);
+  scene.add(checkpointRing);
+
+  function swapWeapon() {
+    if (!checkpointReached || game.resp || game.win || !game.started) return;
+    if (activeWeapon === "smg") {
+      activeWeapon = "force";
+      weaponView.gun.visible = false;
+      forceGunView.gun.visible = true;
+    } else {
+      activeWeapon = "smg";
+      weaponView.gun.visible = true;
+      forceGunView.gun.visible = false;
+    }
+  }
+
+  // ── Force push mechanic ─────────────────────────────────────────────────
+  const forceWaves = [];
+  const forceWeapon = { rate: 1.5, can: 0 };
+  const _fpDir = new THREE.Vector3();
+  const _fpToEnemy = new THREE.Vector3();
+
+  function shootForcePush() {
+    if (!(input.pointer.locked || input.gamepad.connected) || game.win || game.resp || !game.started) return;
+    const now = performance.now() / 1000;
+    if (now < forceWeapon.can) return;
+    forceWeapon.can = now + 1 / forceWeapon.rate;
+
+    forceGunView.kick();
+
+    // Player forward direction (flat)
+    _fpDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    _fpDir.y = 0;
+    _fpDir.normalize();
+
+    // Push enemies in front within range
+    for (const en of enemies) {
+      _fpToEnemy.copy(en.mesh.position).sub(player.pos);
+      _fpToEnemy.y = 0;
+      const dist = _fpToEnemy.length();
+      if (dist > 54 || dist < 0.1) continue;
+      _fpToEnemy.normalize();
+      if (_fpDir.dot(_fpToEnemy) < 0) continue;
+      // Massive impulse away from player — closer bugs get pushed harder
+      const falloff = 1 - (dist / 54) * 0.5; // 1.0 at point blank, 0.5 at max range
+      en.vel.addScaledVector(_fpToEnemy, 60 * falloff);
+      en.vy = 6;
+    }
+
+    // Spawn sonic wave rings
+    const muzzlePos = new THREE.Vector3();
+    forceGunView.getMuzzleWorld(muzzlePos);
+    const waveDir = _fpDir.clone();
+    for (let i = 0; i < 3; i++) {
+      const delay = i * 0.06;
+      const torus = new THREE.Mesh(
+        new THREE.TorusGeometry(0.3, 0.04, 8, 32),
+        new THREE.MeshBasicMaterial({ color: 0x00b4ff, transparent: true, opacity: 0.8 })
+      );
+      torus.position.copy(muzzlePos);
+      torus.lookAt(muzzlePos.clone().add(waveDir));
+      scene.add(torus);
+      forceWaves.push({ mesh: torus, dir: waveDir.clone(), age: -delay, maxAge: 0.4 });
+    }
+
+    // Blue muzzle flash
+    const flashLight = new THREE.PointLight(0x00b4ff, 3, 8);
+    flashLight.position.copy(muzzlePos);
+    scene.add(flashLight);
+    forceWaves.push({ mesh: flashLight, dir: null, age: 0, maxAge: 0.12, isLight: true });
+  }
+
+  function updateForceWaves(dt) {
+    for (let i = forceWaves.length - 1; i >= 0; i--) {
+      const w = forceWaves[i];
+      w.age += dt;
+      if (w.age < 0) { w.mesh.visible = false; continue; }
+      w.mesh.visible = true;
+      if (w.age >= w.maxAge) {
+        scene.remove(w.mesh);
+        if (w.mesh.geometry) w.mesh.geometry.dispose();
+        if (w.mesh.material) w.mesh.material.dispose();
+        forceWaves.splice(i, 1);
+        continue;
+      }
+      if (w.isLight) {
+        w.mesh.intensity = 3 * (1 - w.age / w.maxAge);
+      } else {
+        const t = w.age / w.maxAge;
+        const s = 1 + t * 11;
+        w.mesh.scale.setScalar(s);
+        w.mesh.material.opacity = 0.8 * (1 - t);
+        w.mesh.position.addScaledVector(w.dir, dt * 30);
+      }
+    }
+  }
 
   // ── Alien-bug model + texture pre-load ──────────────────────────────────
   let bugGLTF = null, bugBaseMat = null, skeletonClone = null;
@@ -96,6 +205,7 @@ export async function initGame() {
 
   const input = attachInput({
     element: renderer.domElement,
+    onSwapWeapon: () => swapWeapon(),
     onLookDelta: (dx, dy) => {
       player.yaw += dx;
       player.pitch = clamp(player.pitch + dy, -1.45, 1.45);
@@ -366,7 +476,7 @@ export async function initGame() {
     const g = new THREE.Group();
     const model = skeletonClone(bugGLTF.scene);
     model.scale.setScalar(BUG_SCALE);
-    model.rotation.y = Math.PI; // model faces -Z in GLB, game AI expects +Z as forward
+    // model's head faces +Z in GLB; no rotation needed
     g.add(model);
 
     // Per-enemy material clone so hit-flash is independent per bug
@@ -894,6 +1004,7 @@ export async function initGame() {
     game.respT = 3;
     player.hp = 0;
     weaponView.gun.visible = false;
+    forceGunView.gun.visible = false;
     ui.setStatus("Killed - Respawning...");
     ui.banner("YOU WERE SHREDDED", 1.8);
     drawGunSplatter();
@@ -915,7 +1026,11 @@ export async function initGame() {
     game.deathRoll = 0;
     smoothCamY = player.pos.y;
     smoothGroundY = map.gy(player.pos.x, player.pos.z);
-    weaponView.gun.visible = true;
+    if (activeWeapon === "force") {
+      forceGunView.gun.visible = true;
+    } else {
+      weaponView.gun.visible = true;
+    }
     ui.setStatus("Respawned");
     ui.banner("BACK IN", 1);
     clearGunSplatter();
@@ -1052,12 +1167,12 @@ export async function initGame() {
       const dx = trg.x - en.mesh.position.x;
       const dz = trg.z - en.mesh.position.z;
       const dist = Math.hypot(dx, dz);
-      const want = Math.atan2(dx, -dz);
+      const want = Math.atan2(dx, dz);
       let dy = want - en.yaw;
       dy = Math.atan2(Math.sin(dy), Math.cos(dy));
       en.yaw += dy * Math.min(1, en.tr * dt);
 
-      const f = new THREE.Vector3(Math.sin(en.yaw), 0, -Math.cos(en.yaw));
+      const f = new THREE.Vector3(Math.sin(en.yaw), 0, Math.cos(en.yaw));
       if (!en.air) {
         const m = dist > 0.8 ? 1 : 0;
         const move = f.multiplyScalar(en.s * m);
@@ -1734,6 +1849,18 @@ export async function initGame() {
     }
 
     carTick(dt);
+
+    // Checkpoint pickup detection
+    if (!checkpointReached) {
+      const cdx = player.pos.x - checkpointRing.position.x;
+      const cdz = player.pos.z - checkpointRing.position.z;
+      if (Math.hypot(cdx, cdz) < 6) {
+        checkpointReached = true;
+        scene.remove(checkpointRing);
+        ui.banner("FORCE GUN ACQUIRED \u2014 Press Q / Y to switch", 3);
+      }
+    }
+
     spawnTick(dt);
     aiTick(dt, t);
     networkTick(dt);
@@ -1769,11 +1896,22 @@ export async function initGame() {
 
     hipOffset.set(0.41 + swx, 0.08 + swy, -0.44);
     adsOffset.set(0.24 + swx * 0.4, 0.13 + swy * 0.4, -0.3);
+    const activeView = activeWeapon === "force" ? forceGunView : weaponView;
     weaponView.gun.position.copy(camera.position);
     weaponView.gun.quaternion.copy(camera.quaternion);
     weaponView.gun.position.add((aiming ? adsOffset : hipOffset).clone().applyQuaternion(camera.quaternion));
     weaponView.settle(dt);
-    updateLaser();
+    const forceHipOffset = hipOffset.clone();
+    forceHipOffset.y -= 0.35;
+    const forceAdsOffset = adsOffset.clone();
+    forceAdsOffset.y -= 0.35;
+    forceGunView.gun.position.copy(camera.position);
+    forceGunView.gun.quaternion.copy(camera.quaternion);
+    forceGunView.gun.position.add((aiming ? forceAdsOffset : forceHipOffset).applyQuaternion(camera.quaternion));
+    forceGunView.settle(dt);
+    laserLine.visible = activeWeapon === "smg";
+    if (activeWeapon === "smg") updateLaser();
+    updateForceWaves(dt);
 
     weaponView.getMuzzleWorld(muzzle);
     if (muzzleFlashLife > 0) {
@@ -1791,7 +1929,10 @@ export async function initGame() {
       muzzleFlashLight.intensity = 0;
     }
 
-    if (input.pointer.fire || gp.fire) shoot();
+    if (input.pointer.fire || gp.fire) {
+      if (activeWeapon === "force") shootForcePush();
+      else shoot();
+    }
     for (let i = shells.length - 1; i >= 0; i--) {
       const s = shells[i];
       s.life -= dt;
