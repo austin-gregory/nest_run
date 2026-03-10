@@ -34,6 +34,7 @@ class Enemy extends Schema {
     this.speed = 6;
     this.alive = true;
     this.bugType = "";
+    this.dormant = false;
   }
 }
 type("string")(Enemy.prototype, "id");
@@ -45,6 +46,7 @@ type("float32")(Enemy.prototype, "hp");
 type("float32")(Enemy.prototype, "speed");
 type("boolean")(Enemy.prototype, "alive");
 type("string")(Enemy.prototype, "bugType");
+type("boolean")(Enemy.prototype, "dormant");
 
 class GameState extends Schema {
   constructor() {

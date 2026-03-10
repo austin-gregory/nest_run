@@ -37,6 +37,125 @@ export async function initRTS() {
 
   const map = await createWorld(scene);
 
+  // ── Egg Sac Trap Visuals ──────────────────────────────────────────────
+  const trapVisuals = [];
+  const trapRopeLines = new Map(); // playerSid → THREE.Line
+
+  function makeTextSprite(text, color) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    ctx.font = "bold 28px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = color;
+    ctx.fillText(text, 128, 32);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(20, 5, 1);
+    return { sprite, canvas, tex };
+  }
+
+  for (let i = 0; i < map.eggSacPositions.length; i++) {
+    const pos = map.eggSacPositions[i];
+    const y = map.gy(pos.x, pos.z) + 0.5;
+
+    // Dotted circle ring
+    const ringSegments = 64;
+    const ringRadius = 5;
+    const ringPoints = [];
+    for (let j = 0; j <= ringSegments; j++) {
+      const a = (j / ringSegments) * Math.PI * 2;
+      ringPoints.push(new THREE.Vector3(
+        pos.x + Math.cos(a) * ringRadius,
+        y,
+        pos.z + Math.sin(a) * ringRadius
+      ));
+    }
+    const ringGeo = new THREE.BufferGeometry().setFromPoints(ringPoints);
+    const ringMat = new THREE.LineDashedMaterial({ color: 0x00cccc, dashSize: 1, gapSize: 0.5, transparent: true, opacity: 0.6 });
+    const ring = new THREE.Line(ringGeo, ringMat);
+    ring.computeLineDistances();
+    scene.add(ring);
+
+    // Label sprite
+    const label = makeTextSprite("ACTIVATE TRAP", "#00cccc");
+    label.sprite.position.set(pos.x, y + 6, pos.z);
+    scene.add(label.sprite);
+
+    trapVisuals.push({ ring, label, active: false, pos: { x: pos.x, z: pos.z } });
+  }
+
+  function activateTrapVisual(index) {
+    const tv = trapVisuals[index];
+    if (!tv || tv.active) return;
+    tv.active = true;
+
+    // Remove old ring
+    scene.remove(tv.ring);
+
+    // Create larger solid radius circle
+    const ringSegments = 64;
+    const ringRadius = RTS.EGG_TRAP_RADIUS;
+    const ringPoints = [];
+    const y = map.gy(tv.pos.x, tv.pos.z) + 0.5;
+    for (let j = 0; j <= ringSegments; j++) {
+      const a = (j / ringSegments) * Math.PI * 2;
+      ringPoints.push(new THREE.Vector3(
+        tv.pos.x + Math.cos(a) * ringRadius,
+        y,
+        tv.pos.z + Math.sin(a) * ringRadius
+      ));
+    }
+    const ringGeo = new THREE.BufferGeometry().setFromPoints(ringPoints);
+    const ringMat = new THREE.LineBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.8 });
+    tv.ring = new THREE.Line(ringGeo, ringMat);
+    scene.add(tv.ring);
+
+    // Update label
+    scene.remove(tv.label.sprite);
+    const newLabel = makeTextSprite("ACTIVE", "#ff4400");
+    newLabel.sprite.position.set(tv.pos.x, y + 6, tv.pos.z);
+    scene.add(newLabel.sprite);
+    tv.label = newLabel;
+  }
+
+  function deactivateTrapVisual(index) {
+    const tv = trapVisuals[index];
+    if (!tv) return;
+    tv.active = false;
+    tv.used = true;
+
+    // Remove ring and label entirely — trap is permanently used
+    scene.remove(tv.ring);
+    tv.ring = null;
+    scene.remove(tv.label.sprite);
+    tv.label = null;
+  }
+
+  function addTrapRope(playerSid, eggX, eggZ) {
+    removeTrapRope(playerSid);
+    const points = [new THREE.Vector3(eggX, 3, eggZ), new THREE.Vector3(eggX, 3, eggZ)];
+    const geo = new THREE.BufferGeometry().setFromPoints(points);
+    const mat = new THREE.LineBasicMaterial({ color: 0xffcc00, linewidth: 2 });
+    const line = new THREE.Line(geo, mat);
+    scene.add(line);
+    trapRopeLines.set(playerSid, { line, eggX, eggZ });
+  }
+
+  function removeTrapRope(playerSid) {
+    const r = trapRopeLines.get(playerSid);
+    if (r) {
+      scene.remove(r.line);
+      r.line.geometry.dispose();
+      trapRopeLines.delete(playerSid);
+    }
+  }
+  // ──────────────────────────────────────────────────────────────────────
+
   // ── Camera controls ────────────────────────────────────────────────────
   let camX = 0, camZ = 0;
   let zoom = 1;
@@ -48,6 +167,7 @@ export async function initRTS() {
   let selectedAbility = "basic"; // "basic" | "acid" | "wall"
   let lastAcidSpawnTime = 0;
   let lastWallSpawnTime = 0;
+  let trapsRemaining = 3; // max 3 trap activations per match
 
   const abilityBasicBtn = document.getElementById("ability-basic");
   const abilityAcidBtn = document.getElementById("ability-acid");
@@ -55,6 +175,26 @@ export async function initRTS() {
   const acidCooldownOverlay = document.getElementById("acid-cooldown-overlay");
   const wallCooldownOverlay = document.getElementById("wall-cooldown-overlay");
   const spawnHintEl = document.getElementById("spawn-hint");
+
+  // ── Speed Boost state ───────────────────────────────────────────────────
+  let speedBoostUsesLeft = RTS.SPEED_BOOST_MAX_USES;
+  let speedBoostEndTime = 0;
+  const abilitySpeedBtn = document.getElementById("ability-speed");
+  const speedCooldownOverlay = document.getElementById("speed-cooldown-overlay");
+
+  function activateSpeedBoost() {
+    if (!room || room.state.phase !== "playing") return;
+    if (speedBoostUsesLeft <= 0) { rtsMsg("No speed boosts left!", 1); return; }
+    if (performance.now() / 1000 < speedBoostEndTime) { rtsMsg("Speed boost already active!", 1); return; }
+    room.send("speedBoost");
+    speedBoostUsesLeft--;
+    speedBoostEndTime = performance.now() / 1000 + RTS.SPEED_BOOST_DURATION;
+    if (abilitySpeedBtn) abilitySpeedBtn.textContent = `[4] SPEED BOOST — ${speedBoostUsesLeft} LEFT`;
+    rtsMsg("SPEED BOOST ACTIVATED!", 2);
+  }
+
+  if (abilitySpeedBtn) abilitySpeedBtn.addEventListener("click", () => activateSpeedBoost());
+  // ──────────────────────────────────────────────────────────────────────────
 
   function selectAbility(type) {
     selectedAbility = type;
@@ -81,6 +221,7 @@ export async function initRTS() {
     if (e.code === "Digit1") selectAbility("basic");
     if (e.code === "Digit2") selectAbility("acid");
     if (e.code === "Digit3") selectAbility("wall");
+    if (e.code === "Digit4") activateSpeedBoost();
   });
   addEventListener("keyup", (e) => keys.delete(e.code));
   addEventListener("wheel", (e) => {
@@ -154,22 +295,64 @@ export async function initRTS() {
     return marker;
   }
 
-  // Enemy markers map: networkId -> mesh
+  // Enemy markers map: networkId -> { mesh, tx, tz }
   const enemyMarkers = new Map();
   const enemyMarkerGeo = new THREE.SphereGeometry(1.2, 8, 8);
   const enemyMarkerMat = new THREE.MeshBasicMaterial({ color: 0xff2200 });
+
+  // Dormant markers: networkId -> { ring, label }
+  const dormantMarkers = new Map();
+
+  function addDormantMarker(id) {
+    const entry = enemyMarkers.get(id);
+    if (!entry) return;
+    // Dashed ring at wake radius
+    const ringGeo = new THREE.RingGeometry(RTS.DORMANT_WAKE_RADIUS - 0.3, RTS.DORMANT_WAKE_RADIUS, 32);
+    ringGeo.rotateX(-Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xddaa00, transparent: true, opacity: 0.35 });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.set(entry.mesh.position.x, 1, entry.mesh.position.z);
+    scene.add(ring);
+    // "DORMANT" text label
+    const canvas = document.createElement("canvas");
+    canvas.width = 128; canvas.height = 32;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ddaa00";
+    ctx.font = "bold 20px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("DORMANT", 64, 22);
+    const tex = new THREE.CanvasTexture(canvas);
+    const spriteMat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.8 });
+    const label = new THREE.Sprite(spriteMat);
+    label.scale.set(8, 2, 1);
+    label.position.set(entry.mesh.position.x, 14, entry.mesh.position.z);
+    scene.add(label);
+    dormantMarkers.set(id, { ring, label });
+  }
+
+  function removeDormantMarker(id) {
+    const dm = dormantMarkers.get(id);
+    if (!dm) return;
+    scene.remove(dm.ring);
+    scene.remove(dm.label);
+    dm.ring.geometry.dispose();
+    dm.ring.material.dispose();
+    dm.label.material.map.dispose();
+    dm.label.material.dispose();
+    dormantMarkers.delete(id);
+  }
 
   function addEnemyMarker(id, x, z) {
     const mesh = new THREE.Mesh(enemyMarkerGeo, enemyMarkerMat.clone());
     mesh.position.set(x, 5, z);
     scene.add(mesh);
-    enemyMarkers.set(id, mesh);
+    enemyMarkers.set(id, { mesh, tx: x, tz: z });
   }
 
   function removeEnemyMarker(id) {
-    const mesh = enemyMarkers.get(id);
-    if (mesh) {
-      scene.remove(mesh);
+    const entry = enemyMarkers.get(id);
+    if (entry) {
+      scene.remove(entry.mesh);
       enemyMarkers.delete(id);
     }
   }
@@ -198,6 +381,29 @@ export async function initRTS() {
     }
   }
 
+  // Force gun checkpoint marker on RTS map (at 25% track progress)
+  const cpPos = map.getTrackPoint(0.25);
+  const cpRingGeo = new THREE.RingGeometry(4, 5, 24);
+  cpRingGeo.rotateX(-Math.PI / 2);
+  const cpRingMat = new THREE.MeshBasicMaterial({ color: 0x00b4ff, transparent: true, opacity: 0.5 });
+  const cpRing = new THREE.Mesh(cpRingGeo, cpRingMat);
+  cpRing.position.set(cpPos.x, 2, cpPos.z);
+  scene.add(cpRing);
+  // "CHECKPOINT" label
+  const cpCanvas = document.createElement("canvas");
+  cpCanvas.width = 256; cpCanvas.height = 32;
+  const cpCtx = cpCanvas.getContext("2d");
+  cpCtx.fillStyle = "#00b4ff";
+  cpCtx.font = "bold 20px monospace";
+  cpCtx.textAlign = "center";
+  cpCtx.fillText("FORCE GUN", 128, 22);
+  const cpTex = new THREE.CanvasTexture(cpCanvas);
+  const cpLabelMat = new THREE.SpriteMaterial({ map: cpTex, transparent: true, opacity: 0.8 });
+  const cpLabel = new THREE.Sprite(cpLabelMat);
+  cpLabel.scale.set(12, 1.5, 1);
+  cpLabel.position.set(cpPos.x, 14, cpPos.z);
+  scene.add(cpLabel);
+
   // Spawn preview indicator
   const spawnPreviewGeo = new THREE.RingGeometry(1.5, 2, 16);
   spawnPreviewGeo.rotateX(-Math.PI / 2);
@@ -218,12 +424,13 @@ export async function initRTS() {
   const cartFill = document.getElementById("cart-fill");
   const cartBarVal = document.getElementById("cart-bar-val");
   const rtsMsgEl = document.getElementById("rts-msg");
+  let biomassMax = RTS.BIOMASS_MAX; // scaled by FPS player count
 
   function updateHUD(state) {
     const bio = Math.floor(state.biomass);
     bioVal.textContent = bio;
     bioBarVal.textContent = bio;
-    bioFill.style.width = (state.biomass / RTS.BIOMASS_MAX * 100).toFixed(1) + "%";
+    bioFill.style.width = (state.biomass / biomassMax * 100).toFixed(1) + "%";
 
     enemyCount.textContent = enemyMarkers.size;
     killCount.textContent = state.killCount;
@@ -294,6 +501,43 @@ export async function initRTS() {
       return;
     }
 
+    // ── Click-to-wake dormant bug ──
+    for (const [id, dm] of dormantMarkers) {
+      const dx = x - dm.ring.position.x;
+      const dz = z - dm.ring.position.z;
+      if (Math.hypot(dx, dz) < 3) {
+        room.send("wakeEnemy", { id });
+        return;
+      }
+    }
+
+    // ── Egg sac trap activation ──
+    if (map.eggSacMeshes && map.eggSacMeshes.length > 0) {
+      const trapHits = raycaster.intersectObjects(map.eggSacMeshes, true);
+      if (trapHits.length > 0) {
+        // Find which egg sac group was hit
+        let hitObj = trapHits[0].object;
+        let trapIndex = -1;
+        while (hitObj) {
+          trapIndex = map.eggSacMeshes.indexOf(hitObj);
+          if (trapIndex >= 0) break;
+          hitObj = hitObj.parent;
+        }
+        if (trapIndex >= 0 && !trapVisuals[trapIndex].active && !trapVisuals[trapIndex].used) {
+          if (trapsRemaining <= 0) {
+            rtsMsg("No traps remaining! (max 3 per match)", 1);
+            return;
+          }
+          if (room.state.biomass < RTS.EGG_TRAP_COST) {
+            rtsMsg("Not enough biomass! (cost: " + RTS.EGG_TRAP_COST + ")", 1);
+            return;
+          }
+          room.send("activateTrap", { index: trapIndex });
+          return;
+        }
+      }
+    }
+
     // ── Wall ability ──
     if (selectedAbility === "wall") {
       if (room.state.biomass < RTS.WALL_COST) {
@@ -348,6 +592,63 @@ export async function initRTS() {
     });
   });
 
+  // Right-click to spawn dormant bugs
+  renderer.domElement.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (!room || room.state.phase !== "playing") return;
+
+    const now = Date.now();
+
+    mouse.x = (e.clientX / innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    if (!raycaster.ray.intersectPlane(groundPlane, intersectPoint)) return;
+
+    const x = intersectPoint.x;
+    const z = intersectPoint.z;
+    if (Math.abs(x) > 250 || Math.abs(z) > 250) {
+      rtsMsg("Out of bounds!", 1);
+      return;
+    }
+
+    // Walls can't be dormant — only bugs
+    if (selectedAbility === "wall") {
+      rtsMsg("Right-click spawns dormant bugs — use left-click for walls", 1.5);
+      return;
+    }
+
+    if (now - lastSpawnTime < RTS.SPAWN_COOLDOWN * 1000) {
+      rtsMsg("Cooldown...", 0.5);
+      return;
+    }
+
+    const isAcid = selectedAbility === "acid";
+    const cost = isAcid ? RTS.ACID_BUG_COST : RTS.BASIC_BUG_COST;
+    const hp = isAcid ? RTS.ACID_BUG_HP : RTS.BASIC_BUG_HP;
+    const speed = isAcid ? RTS.ACID_BUG_SPEED : RTS.BASIC_BUG_SPEED;
+
+    if (room.state.biomass < cost) {
+      rtsMsg("Not enough biomass!", 1);
+      return;
+    }
+
+    if (isAcid) {
+      if (now - lastAcidSpawnTime < RTS.ACID_BUG_COOLDOWN * 1000) {
+        const remaining = Math.ceil((RTS.ACID_BUG_COOLDOWN * 1000 - (now - lastAcidSpawnTime)) / 1000);
+        rtsMsg("Acid cooldown: " + remaining + "s", 0.8);
+        return;
+      }
+    }
+
+    lastSpawnTime = now;
+    if (isAcid) lastAcidSpawnTime = now;
+    room.send("spawnEnemy", {
+      x, z, hp, speed, cost,
+      bugType: selectedAbility,
+      dormant: true,
+    });
+  });
+
   // ── Network connection ─────────────────────────────────────────────────
   const urlParams = new URLSearchParams(window.location.search);
   const paramRoomId = urlParams.get("roomId");
@@ -383,12 +684,27 @@ export async function initRTS() {
     room.onMessage("gameStart", (data) => {
       console.log("[rts] Game started! Mode:", data.mode);
       if (overlay && overlay.parentNode) overlay.style.display = "none";
+      // Scale biomass max by FPS player count
+      let fc = 0;
+      if (room.state) room.state.players.forEach((p) => { if (p.role === "fps") fc++; });
+      biomassMax = RTS.BIOMASS_MAX * Math.max(1, fc);
       rtsMsg("GAME ON — SPAWN BUGS TO STOP THE PLAYER!", 3);
+    });
+
+    // Checkpoint bonus notification
+    room.onMessage("checkpointBonus", (data) => {
+      rtsMsg("CHECKPOINT BONUS — +" + data.bonus + " BIOMASS!", 3);
     });
 
     // Track enemy spawns/kills via schema state changes
     room.onMessage("enemySpawn", (data) => {
       addEnemyMarker(data.id, data.x, data.z);
+      if (data.dormant) addDormantMarker(data.id);
+    });
+
+    // Dormant enemy wakes up — remove dormant visuals
+    room.onMessage("enemyWake", (data) => {
+      removeDormantMarker(data.id);
     });
 
     // Wall spawned
@@ -413,6 +729,28 @@ export async function initRTS() {
           fpsBlindTimers.set(sid, { endTime: performance.now() / 1000 + RTS.ACID_BLIND_DURATION });
         }
       });
+    });
+
+    // Trap activated
+    room.onMessage("trapActivated", (data) => {
+      activateTrapVisual(data.index);
+      if (data.remaining !== undefined) trapsRemaining = data.remaining;
+      rtsMsg("TRAP ARMED! (" + trapsRemaining + " remaining)", 1.5);
+    });
+
+    // Trap triggered — draw rope to player
+    room.onMessage("trapTriggered", (data) => {
+      addTrapRope(data.playerSid, data.eggX, data.eggZ);
+    });
+
+    // Trap released — remove rope
+    room.onMessage("trapReleased", (data) => {
+      removeTrapRope(data.playerSid);
+    });
+
+    // Trap deactivated — reset visuals so commander can re-activate
+    room.onMessage("trapDeactivated", (data) => {
+      deactivateTrapVisual(data.index);
     });
 
     room.onMessage("gameOver", (data) => {
@@ -450,21 +788,27 @@ export async function initRTS() {
         }
       }
 
-      // Sync enemy markers - remove dead ones
+      // Sync enemy markers - update target positions for lerp
       const aliveIds = new Set();
       state.enemies.forEach((e, id) => {
         aliveIds.add(id);
-        const marker = enemyMarkers.get(id);
-        if (marker) {
-          marker.position.set(e.x, 5, e.z);
+        const entry = enemyMarkers.get(id);
+        if (entry) {
+          entry.tx = e.x;
+          entry.tz = e.z;
         } else {
           addEnemyMarker(id, e.x, e.z);
+        }
+        // Auto-wake sync: if server says not dormant but we still have a dormant marker, remove it
+        if (!e.dormant && dormantMarkers.has(id)) {
+          removeDormantMarker(id);
         }
       });
       // Remove markers for enemies no longer in state
       for (const [id] of enemyMarkers) {
         if (!aliveIds.has(id)) {
           removeEnemyMarker(id);
+          removeDormantMarker(id);
         }
       }
     });
@@ -564,9 +908,20 @@ export async function initRTS() {
       }
     }
 
-    // Pulse enemy markers
-    for (const [, mesh] of enemyMarkers) {
-      mesh.scale.setScalar(0.8 + Math.sin(t * 3 + mesh.position.x) * 0.15);
+    // Lerp + pulse enemy markers
+    const eLerp = Math.min(1, 15 * dt);
+    for (const [id, entry] of enemyMarkers) {
+      entry.mesh.position.x += (entry.tx - entry.mesh.position.x) * eLerp;
+      entry.mesh.position.z += (entry.tz - entry.mesh.position.z) * eLerp;
+      entry.mesh.scale.setScalar(0.8 + Math.sin(t * 3 + entry.mesh.position.x) * 0.15);
+      // Keep dormant marker visuals tracking the enemy marker position
+      const dm = dormantMarkers.get(id);
+      if (dm) {
+        dm.ring.position.x = entry.mesh.position.x;
+        dm.ring.position.z = entry.mesh.position.z;
+        dm.label.position.x = entry.mesh.position.x;
+        dm.label.position.z = entry.mesh.position.z;
+      }
     }
 
     // Update cooldown overlays
@@ -593,6 +948,32 @@ export async function initRTS() {
         wallCooldownOverlay.textContent = Math.ceil((cdMs - elapsed) / 1000) + "s";
       } else {
         wallCooldownOverlay.style.display = "none";
+      }
+    }
+
+    // Speed boost active overlay
+    if (speedCooldownOverlay) {
+      const remaining = speedBoostEndTime - t;
+      if (remaining > 0) {
+        const pct = remaining / RTS.SPEED_BOOST_DURATION;
+        speedCooldownOverlay.style.height = (pct * 100).toFixed(1) + "%";
+        speedCooldownOverlay.style.display = "block";
+        speedCooldownOverlay.textContent = Math.ceil(remaining) + "s";
+        if (abilitySpeedBtn) abilitySpeedBtn.classList.add("active");
+      } else {
+        speedCooldownOverlay.style.display = "none";
+        if (abilitySpeedBtn) abilitySpeedBtn.classList.remove("active");
+      }
+    }
+
+    // Update rope lines to track player markers
+    for (const [sid, rope] of trapRopeLines) {
+      const marker = fpsMarkers.get(sid);
+      if (marker) {
+        const positions = rope.line.geometry.attributes.position;
+        positions.setXYZ(0, rope.eggX, 3, rope.eggZ);
+        positions.setXYZ(1, marker.position.x, marker.position.y, marker.position.z);
+        positions.needsUpdate = true;
       }
     }
 

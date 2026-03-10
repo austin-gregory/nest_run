@@ -203,6 +203,129 @@ export async function initGame() {
     can: 0,
   };
 
+  // ── Speed boost state ─────────────────────────────────────────────────
+  let speedBoostActive = false;
+  let speedBoostEnd = 0;
+
+  // ── Trap pull/hold state ─────────────────────────────────────────────
+  let trapActive = false;
+  const trapTarget = new THREE.Vector3();
+  let trapEnd = 0;
+  let trapRopeLine = null; // actually a THREE.Group now
+  const ROPE_SEGMENTS = 24;
+  const _ropeVec = new THREE.Vector3();
+  const _ropeLook = new THREE.Vector3();
+
+  function createTrapRope(color) {
+    const group = new THREE.Group();
+
+    // ── Cone hook at the player end ──
+    const coneGeo = new THREE.ConeGeometry(0.18, 0.7, 6);
+    coneGeo.rotateX(Math.PI / 2); // point along +Z by default
+    const coneMat = new THREE.MeshStandardMaterial({
+      color, emissive: color, emissiveIntensity: 0.6, roughness: 0.5,
+    });
+    const cone = new THREE.Mesh(coneGeo, coneMat);
+    group.add(cone);
+    group.userData.cone = cone;
+
+    // ── Rope tube (TubeGeometry rebuilt each frame is expensive, use a thick line via cylinder segments) ──
+    // Use a BufferGeometry ribbon with multiple segments for the rope strand
+    const ropePositions = new Float32Array((ROPE_SEGMENTS + 1) * 3);
+    const ropeGeo = new THREE.BufferGeometry();
+    ropeGeo.setAttribute("position", new THREE.Float32BufferAttribute(ropePositions, 3));
+    const ropeMat = new THREE.LineBasicMaterial({ color, linewidth: 2 });
+    const ropeLine = new THREE.Line(ropeGeo, ropeMat);
+    group.add(ropeLine);
+    group.userData.ropeLine = ropeLine;
+
+    // ── Secondary thinner strand for organic feel ──
+    const strand2Pos = new Float32Array((ROPE_SEGMENTS + 1) * 3);
+    const strand2Geo = new THREE.BufferGeometry();
+    strand2Geo.setAttribute("position", new THREE.Float32BufferAttribute(strand2Pos, 3));
+    const strand2Mat = new THREE.LineBasicMaterial({
+      color, linewidth: 1, transparent: true, opacity: 0.5,
+    });
+    const strand2 = new THREE.Line(strand2Geo, strand2Mat);
+    group.add(strand2);
+    group.userData.strand2 = strand2;
+
+    // Store initial distance for retraction animation
+    group.userData.initialDist = 0;
+    group.userData.color = color;
+
+    return group;
+  }
+
+  function updateTrapRope(group, ax, ay, az, bx, by, bz, time) {
+    const cone = group.userData.cone;
+    const ropeLine = group.userData.ropeLine;
+    const strand2 = group.userData.strand2;
+
+    const dx = ax - bx, dy = ay - by, dz = az - bz;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    // Track initial distance for retraction ratio
+    if (group.userData.initialDist === 0 && dist > 1) {
+      group.userData.initialDist = dist;
+    }
+    const retract = group.userData.initialDist > 0
+      ? Math.max(0, 1 - dist / group.userData.initialDist)
+      : 0;
+
+    // ── Position cone at the player end, pointing toward egg sac ──
+    cone.position.set(bx, by, bz);
+    _ropeLook.set(ax, ay, az);
+    cone.lookAt(_ropeLook);
+
+    // ── Build rope curve from egg sac (a) to player (b) ──
+    // As player gets pulled closer, rope "retracts" — fewer segments visible,
+    // remaining segments bunch up near egg sac
+    const ropePos = ropeLine.geometry.attributes.position;
+    const strand2Pos = strand2.geometry.attributes.position;
+    const sag = Math.min(dist * 0.2, 5) * (1 - retract * 0.7);
+    const waveAmp = 0.08 + (1 - retract) * 0.12; // organic wiggle reduces as rope retracts
+
+    for (let i = 0; i <= ROPE_SEGMENTS; i++) {
+      const t = i / ROPE_SEGMENTS;
+      // Ease the rope — bunch segments toward the egg sac end as it retracts
+      const eased = t;
+      const x = ax + (bx - ax) * eased;
+      const z = az + (bz - az) * eased;
+      // Parabolic droop
+      const droop = -sag * 4 * eased * (1 - eased);
+      // Organic wave along rope
+      const wave = Math.sin(eased * Math.PI * 3 + time * 4) * waveAmp * (1 - eased);
+      const y = ay + (by - ay) * eased + droop;
+
+      // Main rope strand
+      ropePos.setXYZ(i, x, y + wave, z);
+
+      // Secondary strand — offset slightly for organic thickness
+      const off = Math.sin(eased * Math.PI * 2.5 + time * 3 + 1.5) * waveAmp * 0.7 * (1 - eased);
+      // Perpendicular offset (cross the direction with up)
+      const perpX = -dz / (dist || 1) * 0.15;
+      const perpZ = dx / (dist || 1) * 0.15;
+      strand2Pos.setXYZ(i, x + perpX + off * perpX * 3, y + off, z + perpZ + off * perpZ * 3);
+    }
+    ropePos.needsUpdate = true;
+    strand2Pos.needsUpdate = true;
+  }
+
+  function removeTrapRopeVisual() {
+    if (!trapRopeLine) return;
+    scene.remove(trapRopeLine);
+    // Dispose geometries
+    trapRopeLine.userData.cone.geometry.dispose();
+    trapRopeLine.userData.cone.material.dispose();
+    trapRopeLine.userData.ropeLine.geometry.dispose();
+    trapRopeLine.userData.ropeLine.material.dispose();
+    trapRopeLine.userData.strand2.geometry.dispose();
+    trapRopeLine.userData.strand2.material.dispose();
+    trapRopeLine = null;
+  }
+  const activeTrapIndices = new Set(); // tracks which egg sac traps are armed (for shooting)
+
   const input = attachInput({
     element: renderer.domElement,
     onSwapWeapon: () => swapWeapon(),
@@ -216,6 +339,8 @@ export async function initGame() {
   });
 
   function hud() {
+    // In PvP mode, show countdown from server timeRemaining; otherwise show elapsed
+    const useCountdown = isMultiplayer && !isCoopMode && serverTimeRemaining >= 0;
     ui.hud({
       hp: player.hp,
       maxHp: 200,
@@ -223,7 +348,7 @@ export async function initGame() {
       kills: game.kills,
       deaths: game.deaths,
       progress: map.cart.p,
-      elapsed: game.elapsed,
+      elapsed: useCountdown ? serverTimeRemaining : game.elapsed,
     });
   }
 
@@ -549,7 +674,7 @@ export async function initGame() {
 
   // ── Spawning ────────────────────────────────────────────────────────────
   // Network-driven spawn (used in multiplayer)
-  function spawnAlienBugAt(networkId, x, z, hp, speed, bugType) {
+  function spawnAlienBugAt(networkId, x, z, hp, speed, bugType, dormant) {
     const m = mkAlienBug();
     m.g.position.set(x, map.gy(x, z), z);
     map.world.add(m.g);
@@ -595,7 +720,12 @@ export async function initGame() {
       air: false,
       r: 0.6 * BUG_SCALE,
       flash: 0,
+      dormant: !!dormant,
     });
+    if (dormant) {
+      const en = enemies[enemies.length - 1];
+      setEnemyAction(en, "idle");
+    }
     rebuildRayTargets();
     hud();
   }
@@ -784,6 +914,7 @@ export async function initGame() {
   // ── Network state ──────────────────────────────────────────────────────
   let room = null;
   let isMultiplayer = false;
+  let serverTimeRemaining = -1; // -1 means use local elapsed timer
   let networkSendTimer = 0;
   let mySessionId = null;
   let myColorIndex = 0;
@@ -828,6 +959,7 @@ export async function initGame() {
     let enemy = null;
     let part = null;
     let hitWallId = null;
+    let hitTrapIndex = null;
     if (hits.length) {
       camHit = hits[0].point.clone();
       const o = hits[0].object;
@@ -836,6 +968,8 @@ export async function initGame() {
         part = o.userData.hitPart || "body";
       } else if (o?.userData?.isWall) {
         hitWallId = o.userData.wallId;
+      } else if (o?.userData?.isEggTrap) {
+        hitTrapIndex = o.userData.trapIndex;
       }
     }
 
@@ -851,16 +985,23 @@ export async function initGame() {
     let eRoot = enemy;
     let ePart = part;
     let finalWallId = hitWallId;
+    let finalTrapIndex = hitTrapIndex;
     if (muzzleHits.length && muzzleHits[0].distance < d - 0.02) {
       finalHit = muzzleHits[0].point.clone();
       const mo = muzzleHits[0].object;
       if (mo?.userData?.isWall) {
         finalWallId = mo.userData.wallId;
         eRoot = null;
+        finalTrapIndex = null;
+      } else if (mo?.userData?.isEggTrap) {
+        finalTrapIndex = mo.userData.trapIndex;
+        eRoot = null;
+        finalWallId = null;
       } else {
         eRoot = mo?.userData?.enemyRoot || null;
         ePart = mo?.userData?.hitPart || "body";
         finalWallId = null;
+        finalTrapIndex = null;
       }
     }
 
@@ -888,6 +1029,44 @@ export async function initGame() {
         }
         if (w.hp <= 0) {
           destroyWall(finalWallId);
+        }
+      }
+      return;
+    }
+
+    // Egg sac trap hit — shoot to destroy before it catches you
+    if (finalTrapIndex != null && activeTrapIndices.has(finalTrapIndex)) {
+      if (room && isMultiplayer) {
+        // Multiplayer: only teammates (not trapped player) can shoot
+        if (!trapActive) room.send("trapHit", { index: finalTrapIndex, dmg: weapon.dmg });
+      } else {
+        // Singleplayer: handle trap HP locally
+        if (!aiCmd.trapHp) aiCmd.trapHp = {};
+        if (aiCmd.trapHp[finalTrapIndex] === undefined) aiCmd.trapHp[finalTrapIndex] = RTS.EGG_TRAP_HP;
+        aiCmd.trapHp[finalTrapIndex] -= weapon.dmg;
+        if (aiCmd.trapHp[finalTrapIndex] <= 0) {
+          // Destroy the trap
+          activeTrapIndices.delete(finalTrapIndex);
+          aiCmd.usedTraps.add(finalTrapIndex);
+          aiCmd.activatedTraps.delete(finalTrapIndex);
+          // Release if currently caught
+          if (trapActive && aiCmd.trapHoldTimers.has(finalTrapIndex)) {
+            aiCmd.trapHoldTimers.delete(finalTrapIndex);
+            trapActive = false;
+            removeTrapRopeVisual();
+            if (activeWeapon === "force") forceGunView.gun.visible = true;
+            else weaponView.gun.visible = true;
+          }
+          if (map.eggSacMeshes && map.eggSacMeshes[finalTrapIndex]) {
+            map.eggSacMeshes[finalTrapIndex].traverse((child) => {
+              if (child.isMesh && child.userData.isEggTrap) {
+                const ti = targets.indexOf(child);
+                if (ti >= 0) targets.splice(ti, 1);
+                child.userData.isEggTrap = false;
+              }
+            });
+            rebuildRayTargets();
+          }
         }
       }
       return;
@@ -997,6 +1176,136 @@ export async function initGame() {
     }
   }
 
+  // ── AI Commander (singleplayer & coop hazards) ────────────────────────
+  const aiCmd = {
+    nextWallId: 1,
+    lastWallProgress: 0,       // track progress where last wall was placed
+    wallCooldown: 0,           // seconds until next wall can spawn
+    activatedTraps: new Set(), // trap indices already activated
+    usedTraps: new Set(),      // traps that have fired and are done
+    trapCheckTimer: 0,         // seconds until next trap proximity scan
+    trapHoldTimers: new Map(), // trapIndex → { endTime, eggX, eggZ }
+  };
+
+  function aiCommanderTick(dt, t) {
+    // Only in singleplayer or coop (host only)
+    if (isMultiplayer && !isCoopMode) return;
+    if (isCoopMode && !isEnemyHost) return;
+    if (!game.started || game.win) return;
+
+    const cartP = map.cart.p;
+
+    // ── AI Wall spawning ──
+    // Spawn walls ahead of the cart as it progresses
+    aiCmd.wallCooldown -= dt;
+    if (aiCmd.wallCooldown <= 0 && cartP > 0.1 && cartP < 0.9) {
+      // Spawn wall when cart has advanced ~15-20% since last wall
+      if (cartP >= aiCmd.lastWallProgress + 0.15) {
+        // Place wall just ahead of cart (2-4% ahead on the track)
+        const wallProgress = Math.min(0.95, cartP + 0.02 + Math.random() * 0.02);
+        const wallId = "aiw" + (aiCmd.nextWallId++);
+        spawnWall(wallId, wallProgress, RTS.WALL_HP);
+        aiCmd.lastWallProgress = cartP;
+        aiCmd.wallCooldown = 20 + Math.random() * 10; // 20-30 seconds between walls
+      }
+    }
+
+    // ── AI Trap activation ──
+    // Periodically check if any egg sacs are near the cart's current position
+    aiCmd.trapCheckTimer -= dt;
+    if (aiCmd.trapCheckTimer <= 0) {
+      aiCmd.trapCheckTimer = 2; // check every 2 seconds
+      if (map.eggSacPositions && cartP > 0.05) {
+        const cartPt = map.getTrackPoint(cartP);
+        for (let i = 0; i < map.eggSacPositions.length; i++) {
+          if (aiCmd.activatedTraps.has(i) || aiCmd.usedTraps.has(i)) continue;
+          const egg = map.eggSacPositions[i];
+          const d = Math.hypot(egg.x - cartPt.x, egg.z - cartPt.z);
+          // Activate traps that are near the track ahead of the cart (within trap radius)
+          if (d < RTS.EGG_TRAP_RADIUS * 0.8) {
+            // Only activate a limited number — scale with progress
+            if (aiCmd.activatedTraps.size >= 2 + Math.floor(cartP * 4)) continue;
+            aiCmd.activatedTraps.add(i);
+            activeTrapIndices.add(i);
+            // Mark egg sac meshes as shootable
+            if (map.eggSacMeshes && map.eggSacMeshes[i]) {
+              map.eggSacMeshes[i].traverse((child) => {
+                if (child.isMesh) {
+                  child.userData.isEggTrap = true;
+                  child.userData.trapIndex = i;
+                  if (!targets.includes(child)) targets.push(child);
+                }
+              });
+              rebuildRayTargets();
+            }
+          }
+        }
+      }
+    }
+
+    // ── AI Trap proximity trigger (pull player) ──
+    for (const trapIndex of activeTrapIndices) {
+      if (aiCmd.trapHoldTimers.has(trapIndex)) continue; // already triggered
+      if (trapActive) continue; // player already caught by another trap
+      const egg = map.eggSacPositions[trapIndex];
+      if (!egg) continue;
+      const dx = player.pos.x - egg.x;
+      const dz = player.pos.z - egg.z;
+      if (Math.hypot(dx, dz) < RTS.EGG_TRAP_RADIUS) {
+        // Trigger the trap
+        trapActive = true;
+        trapTarget.set(egg.x, 0, egg.z);
+        trapEnd = t + RTS.EGG_TRAP_HOLD_DURATION;
+        aiCmd.trapHoldTimers.set(trapIndex, {
+          endTime: t + RTS.EGG_TRAP_HOLD_DURATION,
+          eggX: egg.x, eggZ: egg.z,
+        });
+        // Create rope visual
+        removeTrapRopeVisual();
+        trapRopeLine = createTrapRope(0x88ff44);
+        const ey = map.gy(egg.x, egg.z) + 2;
+        updateTrapRope(trapRopeLine, egg.x, ey, egg.z, player.pos.x, player.pos.y, player.pos.z, t);
+        scene.add(trapRopeLine);
+      }
+    }
+
+    // ── AI Trap damage tick + release ──
+    const dmgPerSec = RTS.EGG_TRAP_DAMAGE / RTS.EGG_TRAP_HOLD_DURATION;
+    for (const [trapIndex, trap] of aiCmd.trapHoldTimers) {
+      if (t < trap.endTime) {
+        // Deal damage
+        if (!game.resp) {
+          player.hp -= dmgPerSec * dt;
+          player.hp = Math.max(0, player.hp);
+          if (player.hp <= 0) killPlayer();
+          hud();
+        }
+      } else {
+        // Release
+        aiCmd.trapHoldTimers.delete(trapIndex);
+        trapActive = false;
+        removeTrapRopeVisual();
+        // Restore gun visibility
+        if (activeWeapon === "force") forceGunView.gun.visible = true;
+        else weaponView.gun.visible = true;
+        // Deactivate the trap (one-time use)
+        activeTrapIndices.delete(trapIndex);
+        aiCmd.usedTraps.add(trapIndex);
+        if (map.eggSacMeshes && map.eggSacMeshes[trapIndex]) {
+          map.eggSacMeshes[trapIndex].traverse((child) => {
+            if (child.isMesh && child.userData.isEggTrap) {
+              const ti = targets.indexOf(child);
+              if (ti >= 0) targets.splice(ti, 1);
+              child.userData.isEggTrap = false;
+            }
+          });
+          rebuildRayTargets();
+        }
+      }
+    }
+  }
+  // ────────────────────────────────────────────────────────────────────────
+
   function killPlayer() {
     if (game.resp || game.win) return;
     game.deaths++;
@@ -1015,6 +1324,9 @@ export async function initGame() {
     game.resp = false;
     player.hp = 200;
     player.vel.set(0, 0, 0);
+    // Clear trap on respawn
+    trapActive = false;
+    removeTrapRopeVisual();
     player.pos.set(
       WORLD.SPAWN_X,
       map.gy(WORLD.SPAWN_X, WORLD.SPAWN_Z) + player.height,
@@ -1105,7 +1417,11 @@ export async function initGame() {
       const dz = player.pos.z - en.mesh.position.z;
       const dist = Math.hypot(dx, dz);
       en.mixer.update(dt);
-      setEnemyAction(en, dist > 0.8 ? "run" : "attack");
+      if (en.dormant) {
+        setEnemyAction(en, "idle");
+      } else {
+        setEnemyAction(en, dist > 0.8 ? "run" : "attack");
+      }
       // Hit flash
       en.flash = Math.max(0, en.flash - dt);
       if (en.flash > 0) {
@@ -1116,16 +1432,18 @@ export async function initGame() {
         en.mat.emissiveIntensity = 0;
       }
       // Attack damage — still local so each player takes damage independently
-      en.atk = Math.max(0, en.atk - dt);
-      if (en.atk <= 0 && dist < 1.5 * BUG_SCALE) {
-        en.atk = 0.75;
-        const playerInSafe = Math.hypot(player.pos.x - WORLD.SPAWN_X, player.pos.z - WORLD.SPAWN_Z) <= WORLD.SPAWN_SAFE_RADIUS;
-        if (!game.resp && !playerInSafe) {
-          const dmgScale = 1 / (1 + enemies.length * 0.12);
-          player.hp -= (8 + Math.random() * 4 + game.deaths * 0.8) * dmgScale;
-          player.hp = Math.max(0, player.hp);
-          if (player.hp <= 0) killPlayer();
-          hud();
+      if (!en.dormant) {
+        en.atk = Math.max(0, en.atk - dt);
+        if (en.atk <= 0 && dist < 1.5 * BUG_SCALE) {
+          en.atk = 0.75;
+          const playerInSafe = Math.hypot(player.pos.x - WORLD.SPAWN_X, player.pos.z - WORLD.SPAWN_Z) <= WORLD.SPAWN_SAFE_RADIUS;
+          if (!game.resp && !playerInSafe) {
+            const dmgScale = 1 / (1 + enemies.length * 0.12);
+            player.hp -= (8 + Math.random() * 4 + game.deaths * 0.8) * dmgScale;
+            player.hp = Math.max(0, player.hp);
+            if (player.hp <= 0) killPlayer();
+            hud();
+          }
         }
       }
     });
@@ -1147,6 +1465,21 @@ export async function initGame() {
         const pushOut = WORLD.SPAWN_SAFE_RADIUS - n;
         en.mesh.position.x += (dxSpawn / n) * pushOut;
         en.mesh.position.z += (dzSpawn / n) * pushOut;
+      }
+
+      // Dormant bugs stay idle — skip all movement/attack
+      if (en.dormant) {
+        en.mixer.update(dt);
+        setEnemyAction(en, "idle");
+        en.flash = Math.max(0, en.flash - dt);
+        if (en.flash > 0) {
+          en.mat.emissive.setHex(0x250404);
+          en.mat.emissiveIntensity = 1;
+        } else {
+          en.mat.emissive.setHex(0);
+          en.mat.emissiveIntensity = 0;
+        }
+        continue;
       }
 
       // Find nearest player target (local + other co-op players)
@@ -1175,7 +1508,8 @@ export async function initGame() {
       const f = new THREE.Vector3(Math.sin(en.yaw), 0, Math.cos(en.yaw));
       if (!en.air) {
         const m = dist > 0.8 ? 1 : 0;
-        const move = f.multiplyScalar(en.s * m);
+        const spd = speedBoostActive ? en.s * 2 : en.s;
+        const move = f.multiplyScalar(spd * m);
         en.vel.x += (move.x - en.vel.x) * Math.min(1, en.acc * dt);
         en.vel.z += (move.z - en.vel.z) * Math.min(1, en.acc * dt);
         en.mesh.position.x += en.vel.x * dt;
@@ -1822,7 +2156,7 @@ export async function initGame() {
     const sprint = input.keys.has("ShiftLeft") || input.keys.has("ShiftRight") || gp.sprint;
     const speed = player.ground ? (sprint ? player.ss : player.ws) : player.as;
 
-    if (!game.resp && !game.win && game.started) {
+    if (!game.resp && !game.win && game.started && !trapActive) {
       if (player.ground) {
         friction(player.fg, dt);
         accel(wishMove, speed, player.ag, dt);
@@ -1843,6 +2177,48 @@ export async function initGame() {
     player.pos.addScaledVector(player.vel, dt);
     collidePlayer();
 
+    // ── Trap pull/hold ──
+    if (trapActive && !game.resp) {
+      // Hide guns while trapped to avoid bob jitter
+      weaponView.gun.visible = false;
+      forceGunView.gun.visible = false;
+      const tdx = trapTarget.x - player.pos.x;
+      const tdz = trapTarget.z - player.pos.z;
+      const tdist = Math.hypot(tdx, tdz);
+      const stopDist = RTS.EGG_TRAP_STOP_DIST;
+      if (tdist > stopDist) {
+        // Pull toward egg sac, stop just outside the model
+        const nx = tdx / tdist;
+        const nz = tdz / tdist;
+        player.vel.x = nx * RTS.EGG_TRAP_PULL_SPEED;
+        player.vel.z = nz * RTS.EGG_TRAP_PULL_SPEED;
+      } else {
+        // Hold in place at edge of egg sac
+        player.vel.x = 0;
+        player.vel.z = 0;
+      }
+      // Kill bob while trapped
+      player.vel.y = 0;
+      // Update rope visual
+      if (trapRopeLine) {
+        const ey = map.gy(trapTarget.x, trapTarget.z) + 2;
+        updateTrapRope(trapRopeLine, trapTarget.x, ey, trapTarget.z, player.pos.x, player.pos.y, player.pos.z, t);
+      }
+      // Client-side fallback release
+      if (t > trapEnd) {
+        trapActive = false;
+        removeTrapRopeVisual();
+        // Restore gun visibility
+        if (activeWeapon === "force") forceGunView.gun.visible = true;
+        else weaponView.gun.visible = true;
+      }
+    }
+
+    // ── Speed boost timer ──
+    if (speedBoostActive && t > speedBoostEnd) {
+      speedBoostActive = false;
+    }
+
     if (game.resp) {
       game.respT -= dt;
       if (game.respT <= 0) respawnPlayer();
@@ -1862,6 +2238,7 @@ export async function initGame() {
     }
 
     spawnTick(dt);
+    aiCommanderTick(dt, t);
     aiTick(dt, t);
     networkTick(dt);
     lerpOtherPlayers(dt);
@@ -1885,7 +2262,7 @@ export async function initGame() {
     const fov = aiming ? 30 : sprint ? 100 : 94;
     camera.fov += (fov - camera.fov) * Math.min(1, 12 * dt);
     camera.updateProjectionMatrix();
-    ui.setCrosshairAim(aiming);
+    ui.setCrosshairAim(aiming, trapActive);
 
     const sway = aiming ? 0.35 : 1;
     const movingForward = (input.keys.has("KeyW") && !input.keys.has("KeyS")) || gp.moveY < -0.3;
@@ -1909,8 +2286,8 @@ export async function initGame() {
     forceGunView.gun.quaternion.copy(camera.quaternion);
     forceGunView.gun.position.add((aiming ? forceAdsOffset : forceHipOffset).applyQuaternion(camera.quaternion));
     forceGunView.settle(dt);
-    laserLine.visible = activeWeapon === "smg";
-    if (activeWeapon === "smg") updateLaser();
+    laserLine.visible = activeWeapon === "smg" && !trapActive;
+    if (activeWeapon === "smg" && !trapActive) updateLaser();
     updateForceWaves(dt);
 
     weaponView.getMuzzleWorld(muzzle);
@@ -2100,8 +2477,17 @@ export async function initGame() {
 
     // Listen for enemy spawn commands from RTS player
     room.onMessage("enemySpawn", (data) => {
-      console.log("[network] Spawning enemy:", data.id, data.bugType || "basic");
-      spawnAlienBugAt(data.id, data.x, data.z, data.hp, data.speed, data.bugType);
+      console.log("[network] Spawning enemy:", data.id, data.bugType || "basic", data.dormant ? "(dormant)" : "");
+      spawnAlienBugAt(data.id, data.x, data.z, data.hp, data.speed, data.bugType, data.dormant);
+    });
+
+    // Dormant enemy wakes up
+    room.onMessage("enemyWake", (data) => {
+      const en = enemies.find((e) => e.networkId === data.id);
+      if (en) {
+        en.dormant = false;
+        setEnemyAction(en, "run");
+      }
     });
 
     // Receive shot tracers from other players
@@ -2118,6 +2504,83 @@ export async function initGame() {
       const dist = Math.hypot(dx, dz);
       if (dist <= RTS.ACID_BLIND_RADIUS) {
         activateBlind();
+      }
+    });
+
+    // Speed boost — all bugs move 2x speed
+    room.onMessage("speedBoost", () => {
+      speedBoostActive = true;
+      speedBoostEnd = performance.now() / 1000 + RTS.SPEED_BOOST_DURATION;
+      ui.banner("BUGS ENRAGED — 2X SPEED!", 3);
+    });
+
+    // Trap triggered — pull player to egg sac
+    room.onMessage("trapTriggered", (data) => {
+      if (data.playerSid === mySessionId) {
+        trapActive = true;
+        trapTarget.set(data.eggX, 0, data.eggZ);
+        trapEnd = performance.now() / 1000 + RTS.EGG_TRAP_HOLD_DURATION;
+        ui.banner("TRAPPED!", 2);
+        // Create rope line visual
+        removeTrapRopeVisual();
+        trapRopeLine = createTrapRope(0xffcc00);
+        const ey = map.gy(data.eggX, data.eggZ) + 2;
+        updateTrapRope(trapRopeLine, data.eggX, ey, data.eggZ, player.pos.x, player.pos.y, player.pos.z, performance.now() / 1000);
+        scene.add(trapRopeLine);
+      }
+    });
+
+    // Trap released
+    room.onMessage("trapReleased", (data) => {
+      if (data.playerSid === mySessionId) {
+        trapActive = false;
+        removeTrapRopeVisual();
+        // Restore gun visibility
+        if (activeWeapon === "force") forceGunView.gun.visible = true;
+        else weaponView.gun.visible = true;
+      }
+    });
+
+    // Trap damage tick
+    room.onMessage("trapDamage", (data) => {
+      if (data.playerSid === mySessionId && !game.resp) {
+        player.hp -= data.dmg;
+        player.hp = Math.max(0, player.hp);
+        hud();
+        if (player.hp <= 0) killPlayer();
+      }
+    });
+
+    // Trap activated — track for shooting
+    room.onMessage("trapActivated", (data) => {
+      activeTrapIndices.add(data.index);
+      // Add egg sac meshes as shoot targets
+      if (map.eggSacMeshes && map.eggSacMeshes[data.index]) {
+        const group = map.eggSacMeshes[data.index];
+        group.traverse((child) => {
+          if (child.isMesh) {
+            child.userData.isEggTrap = true;
+            child.userData.trapIndex = data.index;
+            if (!targets.includes(child)) targets.push(child);
+          }
+        });
+        rebuildRayTargets();
+      }
+    });
+
+    // Trap deactivated — remove from shoot targets
+    room.onMessage("trapDeactivated", (data) => {
+      activeTrapIndices.delete(data.index);
+      if (map.eggSacMeshes && map.eggSacMeshes[data.index]) {
+        const group = map.eggSacMeshes[data.index];
+        group.traverse((child) => {
+          if (child.isMesh && child.userData.isEggTrap) {
+            const ti = targets.indexOf(child);
+            if (ti >= 0) targets.splice(ti, 1);
+            child.userData.isEggTrap = false;
+          }
+        });
+        rebuildRayTargets();
       }
     });
 
@@ -2166,6 +2629,7 @@ export async function initGame() {
     room.onStateChange((state) => {
       syncOtherPlayers(state, mySessionId);
       updateHostStatus();
+      if (state.timeRemaining !== undefined) serverTimeRemaining = state.timeRemaining;
 
       // Build set of local networkIds for comparison
       const localIds = new Set();

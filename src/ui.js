@@ -34,7 +34,12 @@ export function createUI() {
     refs.st.textContent = text;
   }
 
-  function setCrosshairAim(isAim) {
+  function setCrosshairAim(isAim, hidden) {
+    if (hidden) {
+      refs.x.style.opacity = "0";
+      if (refs.optic) refs.optic.style.opacity = "0";
+      return;
+    }
     refs.x.style.opacity = isAim ? "0.08" : "0.9";
     if (refs.optic) refs.optic.style.opacity = isAim ? "1" : "0";
   }

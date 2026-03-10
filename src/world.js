@@ -1,7 +1,19 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
 import { WORLD } from "./constants.js";
 
+// Seeded PRNG (mulberry32) — deterministic across clients
+function mulberry32(seed) {
+  let s = seed | 0;
+  return function() {
+    s = (s + 0x6D2B79F5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export async function createWorld(scene) {
+  const rand = mulberry32(42069);
   const world = new THREE.Group();
   scene.add(world);
 
@@ -120,7 +132,7 @@ export async function createWorld(scene) {
     const g = new THREE.DodecahedronGeometry(1, 0);
     g.scale(sx, sy, sz);
     const m = new THREE.Mesh(g, rockMat);
-    m.rotation.set((Math.random() - 0.5) * 0.35, rotY, (Math.random() - 0.5) * 0.25);
+    m.rotation.set((rand() - 0.5) * 0.35, rotY, (rand() - 0.5) * 0.25);
     put(m, x, z, sy * 0.9);
     world.add(m);
     addCollider(m);
@@ -129,19 +141,19 @@ export async function createWorld(scene) {
   // Perimeter ring
   for (let i = 0; i < 96; i++) {
     const a = (i / 96) * Math.PI * 2;
-    const radius = 240 + Math.sin(i * 0.9) * 6 + (Math.random() - 0.5) * 8;
+    const radius = 240 + Math.sin(i * 0.9) * 6 + (rand() - 0.5) * 8;
     const x = Math.cos(a) * radius;
     const z = Math.sin(a) * radius * 0.96;
     if (Math.hypot(x - WORLD.NEST_X, z - WORLD.NEST_Z) < nestClearRadius) continue;
-    const h = 7 + Math.random() * 9;
-    addRock(x, z, 5 + Math.random() * 4, h, 5 + Math.random() * 4, a + Math.PI * 0.5);
-    if (Math.random() < 0.28) {
+    const h = 7 + rand() * 9;
+    addRock(x, z, 5 + rand() * 4, h, 5 + rand() * 4, a + Math.PI * 0.5);
+    if (rand() < 0.28) {
       addRock(
-        x * 0.95 + (Math.random() - 0.5) * 4,
-        z * 0.95 + (Math.random() - 0.5) * 4,
-        4 + Math.random() * 3,
-        h + 5 + Math.random() * 8,
-        4 + Math.random() * 3,
+        x * 0.95 + (rand() - 0.5) * 4,
+        z * 0.95 + (rand() - 0.5) * 4,
+        4 + rand() * 3,
+        h + 5 + rand() * 8,
+        4 + rand() * 3,
         a
       );
     }
@@ -149,16 +161,16 @@ export async function createWorld(scene) {
 
   // Cliff chunks
   for (let i = 0; i < 28; i++) {
-    const a = (i / 28) * Math.PI * 2 + Math.random() * 0.2;
-    const radius = 230 + Math.random() * 10;
-    const sx = 12 + Math.random() * 10;
-    const sy = 14 + Math.random() * 18;
-    const sz = 8 + Math.random() * 9;
+    const a = (i / 28) * Math.PI * 2 + rand() * 0.2;
+    const radius = 230 + rand() * 10;
+    const sx = 12 + rand() * 10;
+    const sy = 14 + rand() * 18;
+    const sz = 8 + rand() * 9;
     const x = Math.cos(a) * radius;
     const z = Math.sin(a) * radius * 0.94;
     if (Math.hypot(x - WORLD.NEST_X, z - WORLD.NEST_Z) < nestClearRadius + 10) continue;
     const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), cliffMat);
-    m.rotation.y = a + Math.random() * 0.6;
+    m.rotation.y = a + rand() * 0.6;
     put(m, x, z, sy * 0.5);
     world.add(m);
     addCollider(m);
@@ -166,11 +178,12 @@ export async function createWorld(scene) {
 
   // Scattered egg sacs — avoid track
   const eggSacPositions = [];
+  const eggSacMeshes = [];
   for (let i = 0; i < 48; i++) {
-    const ex = (Math.random() * 2 - 1) * 200;
-    const ez = (Math.random() * 2 - 1) * 190;
+    const ex = (rand() * 2 - 1) * 200;
+    const ez = (rand() * 2 - 1) * 190;
     if (distToTrackSq(ex, ez) < 16 * 16) continue;
-    eggSacPositions.push({ x: ex, z: ez, rotY: Math.random() * Math.PI * 2 });
+    eggSacPositions.push({ x: ex, z: ez, rotY: rand() * Math.PI * 2 });
   }
   {
     const { GLTFLoader } = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm");
@@ -212,6 +225,7 @@ export async function createWorld(scene) {
       group.rotation.y = pos.rotY;
       group.position.set(pos.x, gy(pos.x, pos.z), pos.z);
       world.add(group);
+      eggSacMeshes.push(group);
     }
   }
 
@@ -287,14 +301,14 @@ export async function createWorld(scene) {
   nest.add(core);
   for (let i = 0; i < 18; i++) {
     const a = (i / 18) * Math.PI * 2;
-    const r = 12 + Math.random() * 6;
+    const r = 12 + rand() * 6;
     const px = WORLD.NEST_X + Math.cos(a) * r;
     const pz = WORLD.NEST_Z + Math.sin(a) * r;
     const p = new THREE.Mesh(
-      new THREE.DodecahedronGeometry(2.1 + Math.random() * 1.2, 0),
+      new THREE.DodecahedronGeometry(2.1 + rand() * 1.2, 0),
       nestPodMat
     );
-    put(p, px, pz, 1.2 + Math.random() * 0.4);
+    put(p, px, pz, 1.2 + rand() * 0.4);
     nest.add(p);
   }
 
@@ -363,5 +377,7 @@ export async function createWorld(scene) {
     getTrackPoint,
     getTrackTangent,
     nearestTrackProgress,
+    eggSacMeshes,
+    eggSacPositions,
   };
 }
