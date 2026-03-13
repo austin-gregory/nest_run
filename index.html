@@ -8,7 +8,13 @@
     *{margin:0;padding:0;box-sizing:border-box}
     html,body{width:100%;height:100%;background:#05070a;color:#fff;font-family:'Courier New',Courier,monospace;overflow:auto}
 
+    #bg-canvas{
+      position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;
+      pointer-events:none;
+    }
+
     #lobby{
+      position:relative;z-index:1;
       max-width:700px;margin:0 auto;padding:40px 20px;
       display:flex;flex-direction:column;align-items:center;gap:28px;
     }
@@ -89,12 +95,19 @@
     .slot.open{color:#00e87a;border:1px solid rgba(0,232,122,.3)}
     .slot.filled{color:#666;border:1px solid rgba(255,255,255,.08)}
 
+    .rules-link{
+      font-size:13px;color:#00b4ff;letter-spacing:.15em;
+      text-decoration:none;border-bottom:1px solid rgba(0,180,255,.3);
+      padding-bottom:2px;transition:color .15s;
+    }
+    .rules-link:hover{color:#00e0ff}
 
     .error-msg{color:#e84000;font-size:13px;min-height:18px;text-align:center}
     .gp-focus{box-shadow:0 0 12px rgba(0,180,255,.7);border-color:#00b4ff !important;outline:none}
   </style>
 </head>
 <body>
+<canvas id="bg-canvas"></canvas>
 <div id="lobby">
   <h1>NEST RUN</h1>
   <div class="subtitle">Choose your role and enter the battlefield</div>
@@ -125,8 +138,270 @@
       <div class="rooms-empty">No rooms available. Create one!</div>
     </div>
   </div>
+
+  <a href="rules.html" class="rules-link">RULES</a>
 </div>
 
+<!-- 3D background flyby -->
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+
+(function initBgScene() {
+  const canvas = document.getElementById("bg-canvas");
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x2d1f16);
+  scene.fog = new THREE.Fog(0x2d1f16, 80, 400);
+
+  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.5, 600);
+
+  // Lighting (matches game)
+  scene.add(new THREE.HemisphereLight(0xffc98a, 0x2a1b13, 0.62));
+  const sun = new THREE.DirectionalLight(0xffb15c, 1.35);
+  sun.position.set(120, 180, 30);
+  scene.add(sun);
+
+  // ── Seeded PRNG ──
+  function mulberry32(seed) {
+    let s = seed | 0;
+    return function() {
+      s = (s + 0x6D2B79F5) | 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const rand = mulberry32(42069);
+
+  // ── Track path ──
+  const TRACK_WAYPOINTS = [
+    { x: -120, y: 0, z: 170 },
+    { x: -120, y: 0, z: 105 },
+    { x:  120, y: 0, z: 85 },
+    { x:  120, y: 0, z: 25 },
+    { x: -120, y: 0, z: 5 },
+    { x: -120, y: 0, z: -60 },
+    { x:  120, y: 0, z: -80 },
+    { x:  120, y: 0, z: -140 },
+    { x: -120, y: 0, z: -160 },
+  ];
+  const waypoints = TRACK_WAYPOINTS.map(p => new THREE.Vector3(p.x, p.y, p.z));
+  const trackPath = new THREE.CatmullRomCurve3(waypoints, false, "catmullrom", 0.5);
+  const trackLength = trackPath.getLength();
+
+  // Pre-compute track samples
+  const TRACK_SAMPLES = 200;
+  const trackSamples = [];
+  for (let i = 0; i <= TRACK_SAMPLES; i++) {
+    const t = i / TRACK_SAMPLES;
+    const pt = trackPath.getPointAt(t);
+    trackSamples.push({ t, x: pt.x, z: pt.z });
+  }
+
+  function distToTrackSq(x, z) {
+    let best = Infinity;
+    for (const s of trackSamples) {
+      const d = (s.x - x) ** 2 + (s.z - z) ** 2;
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
+  // ── Terrain height ──
+  const TRACK_FLATTEN_RADIUS = 14;
+  const TRACK_FLATTEN_RADIUS_SQ = TRACK_FLATTEN_RADIUS * TRACK_FLATTEN_RADIUS;
+  const gy = (x, z) => {
+    const base = (Math.sin(x * 0.04) + Math.cos(z * 0.037)) * 0.8;
+    const dSq = distToTrackSq(x, z);
+    if (dSq < TRACK_FLATTEN_RADIUS_SQ) {
+      const blend = Math.sqrt(dSq) / TRACK_FLATTEN_RADIUS;
+      return base * blend * blend;
+    }
+    return base;
+  };
+
+  // ── Terrain mesh ──
+  const terrainGeo = new THREE.PlaneGeometry(1000, 1000, 120, 120);
+  terrainGeo.rotateX(-Math.PI / 2);
+  const tp = terrainGeo.attributes.position;
+  for (let i = 0; i < tp.count; i++) {
+    tp.setY(i, gy(tp.getX(i), tp.getZ(i)));
+  }
+  terrainGeo.computeVertexNormals();
+  const sandTex = new THREE.TextureLoader().load("./assets/sand.png");
+  sandTex.wrapS = THREE.RepeatWrapping;
+  sandTex.wrapT = THREE.RepeatWrapping;
+  sandTex.repeat.set(26, 26);
+  sandTex.colorSpace = THREE.SRGBColorSpace;
+  scene.add(new THREE.Mesh(terrainGeo,
+    new THREE.MeshStandardMaterial({ color: 0x8a7d68, roughness: 1, metalness: 0, map: sandTex })
+  ));
+
+  // ── Rails ──
+  const railMat = new THREE.MeshStandardMaterial({ color: 0x69778b, roughness: 0.55, metalness: 0.7 });
+  const RAIL_SEG_LEN = 2;
+  const railSegCount = Math.ceil(trackLength / RAIL_SEG_LEN);
+  const railGeo = new THREE.BoxGeometry(0.35, 0.18, RAIL_SEG_LEN + 0.1);
+  for (let i = 0; i < railSegCount; i++) {
+    const t = (i + 0.5) / railSegCount;
+    const pt = trackPath.getPointAt(t);
+    const tan = trackPath.getTangentAt(t);
+    const angle = Math.atan2(tan.x, tan.z);
+    const perpX = Math.cos(angle);
+    const perpZ = -Math.sin(angle);
+    for (const side of [-2, 2]) {
+      const rx = pt.x + perpX * side;
+      const rz = pt.z + perpZ * side;
+      const rail = new THREE.Mesh(railGeo, railMat);
+      rail.position.set(rx, gy(rx, rz) + 0.17, rz);
+      rail.rotation.y = angle;
+      scene.add(rail);
+    }
+  }
+
+  // ── Sleepers ──
+  const sleeperMat = new THREE.MeshStandardMaterial({ color: 0x3c2b22, roughness: 1 });
+  const sleeperGeo = new THREE.BoxGeometry(5.2, 0.25, 0.55);
+  const SLEEPER_SPACING = 4;
+  const sleeperCount = Math.floor(trackLength / SLEEPER_SPACING);
+  for (let i = 0; i <= sleeperCount; i++) {
+    const t = i / sleeperCount;
+    const pt = trackPath.getPointAt(t);
+    const tan = trackPath.getTangentAt(t);
+    const sleeper = new THREE.Mesh(sleeperGeo, sleeperMat);
+    sleeper.position.set(pt.x, gy(pt.x, pt.z) + 0.1, pt.z);
+    sleeper.rotation.y = Math.atan2(tan.x, tan.z);
+    scene.add(sleeper);
+  }
+
+  // ── Rocks (perimeter ring) ──
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x3a332c, roughness: 0.98, metalness: 0.02 });
+  const cliffMat = new THREE.MeshStandardMaterial({ color: 0x2d2823, roughness: 1, metalness: 0 });
+  const NEST_X = -120, NEST_Z = -180;
+  const nestClearRadius = 42;
+
+  for (let i = 0; i < 96; i++) {
+    const a = (i / 96) * Math.PI * 2;
+    const radius = 240 + Math.sin(i * 0.9) * 6 + (rand() - 0.5) * 8;
+    const x = Math.cos(a) * radius;
+    const z = Math.sin(a) * radius * 0.96;
+    if (Math.hypot(x - NEST_X, z - NEST_Z) < nestClearRadius) continue;
+    const h = 7 + rand() * 9;
+    const sx = 5 + rand() * 4, sz = 5 + rand() * 4;
+    const g = new THREE.DodecahedronGeometry(1, 0);
+    g.scale(sx, h, sz);
+    const m = new THREE.Mesh(g, rockMat);
+    m.rotation.set((rand() - 0.5) * 0.35, a + Math.PI * 0.5, (rand() - 0.5) * 0.25);
+    m.position.set(x, gy(x, z) + h * 0.9, z);
+    scene.add(m);
+    if (rand() < 0.28) {
+      const sx2 = 4 + rand() * 3, h2 = h + 5 + rand() * 8, sz2 = 4 + rand() * 3;
+      const g2 = new THREE.DodecahedronGeometry(1, 0);
+      g2.scale(sx2, h2, sz2);
+      const m2 = new THREE.Mesh(g2, rockMat);
+      const x2 = x * 0.95 + (rand() - 0.5) * 4;
+      const z2 = z * 0.95 + (rand() - 0.5) * 4;
+      m2.rotation.set((rand() - 0.5) * 0.35, a, (rand() - 0.5) * 0.25);
+      m2.position.set(x2, gy(x2, z2) + h2 * 0.9, z2);
+      scene.add(m2);
+    }
+  }
+
+  // Cliff chunks
+  for (let i = 0; i < 28; i++) {
+    const a = (i / 28) * Math.PI * 2 + rand() * 0.2;
+    const radius = 230 + rand() * 10;
+    const sx = 12 + rand() * 10, sy = 14 + rand() * 18, sz = 8 + rand() * 9;
+    const x = Math.cos(a) * radius;
+    const z = Math.sin(a) * radius * 0.94;
+    if (Math.hypot(x - NEST_X, z - NEST_Z) < nestClearRadius + 10) continue;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), cliffMat);
+    m.rotation.y = a + rand() * 0.6;
+    m.position.set(x, gy(x, z) + sy * 0.5, z);
+    scene.add(m);
+  }
+
+  // ── Nest ──
+  const nestCoreMat = new THREE.MeshStandardMaterial({
+    color: 0xb08a7a, roughness: 0.88, emissive: 0x2a0e08, emissiveIntensity: 0.9,
+  });
+  const nestPodMat = new THREE.MeshStandardMaterial({ color: 0xa17163, roughness: 0.95 });
+  const core = new THREE.Mesh(new THREE.SphereGeometry(8.4, 24, 20), nestCoreMat);
+  core.position.set(NEST_X, gy(NEST_X, NEST_Z) + 4.9, NEST_Z);
+  scene.add(core);
+  for (let i = 0; i < 18; i++) {
+    const a = (i / 18) * Math.PI * 2;
+    const r = 12 + rand() * 6;
+    const px = NEST_X + Math.cos(a) * r;
+    const pz = NEST_Z + Math.sin(a) * r;
+    const p = new THREE.Mesh(new THREE.DodecahedronGeometry(2.1 + rand() * 1.2, 0), nestPodMat);
+    p.position.set(px, gy(px, pz) + 1.2 + rand() * 0.4, pz);
+    scene.add(p);
+  }
+
+  // ── Cart at spawn ──
+  const rustyMat = new THREE.MeshStandardMaterial({ color: 0xc9c1b6, roughness: 0.7, metalness: 0.35 });
+  const cartGroup = new THREE.Group();
+  cartGroup.add(new THREE.Mesh(new THREE.BoxGeometry(4.2, 2.7, 6.2), rustyMat));
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.35, 5.4), rustyMat);
+  roof.position.y = 1.5;
+  cartGroup.add(roof);
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x20262e, roughness: 0.45, metalness: 0.6 });
+  for (const wx of [-1.7, 1.7]) {
+    for (const wz of [-2.4, 2.4]) {
+      const w = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.35, 12), wheelMat);
+      w.rotation.z = Math.PI / 2;
+      w.position.set(wx, -1.18, wz);
+      cartGroup.add(w);
+    }
+  }
+  const spawnPt = trackPath.getPointAt(0);
+  const spawnTan = trackPath.getTangentAt(0);
+  cartGroup.position.set(spawnPt.x, gy(spawnPt.x, spawnPt.z) + 1.7, spawnPt.z);
+  cartGroup.rotation.y = Math.atan2(spawnTan.x, spawnTan.z);
+  scene.add(cartGroup);
+
+  // ── Camera flyby path ──
+  // Orbit the map at a slight angle, looking toward center
+  const CAM_RADIUS = 200;
+  const CAM_HEIGHT = 65;
+  const CAM_SPEED = 0.015; // radians per second
+  const CAM_LOOK = new THREE.Vector3(0, 0, -10);
+
+  let elapsed = 0;
+  const clock = new THREE.Clock();
+
+  function onResize() {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  }
+  window.addEventListener("resize", onResize);
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = clock.getDelta();
+    elapsed += dt;
+
+    const angle = elapsed * CAM_SPEED;
+    camera.position.set(
+      Math.cos(angle) * CAM_RADIUS,
+      CAM_HEIGHT + Math.sin(elapsed * 0.04) * 10,
+      Math.sin(angle) * CAM_RADIUS
+    );
+    camera.lookAt(CAM_LOOK);
+
+    renderer.render(scene, camera);
+  }
+  animate();
+})();
+</script>
+
+<!-- Lobby logic -->
 <script type="module">
 import { getAvailableRooms } from "./src/network.js";
 
