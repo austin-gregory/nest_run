@@ -102,8 +102,62 @@
     }
     .rules-link:hover{color:#00e0ff}
 
+    /* ── Auth section ─────────────────────────────────────── */
+    .auth-section{
+      width:100%;
+      background:rgba(2,10,22,.7);
+      border:1px solid rgba(0,180,255,.15);border-radius:6px;
+      padding:16px;display:flex;flex-direction:column;align-items:center;gap:10px;
+    }
+    .auth-section .auth-label{
+      font-size:11px;letter-spacing:.2em;color:rgba(0,190,255,.5);text-transform:uppercase;
+    }
+    .auth-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center}
+    .auth-input{
+      padding:8px 12px;font-size:13px;font-family:inherit;
+      background:rgba(255,255,255,.04);color:#fff;
+      border:1px solid rgba(255,255,255,.12);border-radius:4px;
+      outline:none;width:180px;letter-spacing:1px;
+    }
+    .auth-input::placeholder{color:#445}
+    .auth-input:focus{border-color:rgba(0,180,255,.4)}
+    .auth-btn{
+      padding:8px 18px;font-size:12px;font-family:inherit;
+      background:rgba(0,180,255,.15);color:#00b4ff;
+      border:1px solid rgba(0,180,255,.3);border-radius:4px;
+      cursor:pointer;letter-spacing:2px;transition:all .15s;
+    }
+    .auth-btn:hover{background:rgba(0,180,255,.25);color:#00e0ff}
+    .auth-btn.danger{background:rgba(255,60,60,.1);color:#f66;border-color:rgba(255,60,60,.3)}
+    .auth-btn.danger:hover{background:rgba(255,60,60,.2)}
+    .auth-msg{font-size:12px;color:#e84000;min-height:16px;text-align:center}
+    .auth-toggle{font-size:11px;color:#556;cursor:pointer;text-decoration:underline}
+    .auth-toggle:hover{color:#00b4ff}
+
+    /* ── Stats display ────────────────────────────────────── */
+    .stats-bar{
+      display:flex;gap:16px;flex-wrap:wrap;justify-content:center;
+      font-size:12px;color:#aab;letter-spacing:1px;
+    }
+    .stat-item{display:flex;flex-direction:column;align-items:center;gap:2px}
+    .stat-val{font-size:18px;font-weight:700;color:#00e0ff}
+    .stat-label{font-size:10px;color:rgba(0,190,255,.5);text-transform:uppercase;letter-spacing:.15em}
+    .user-greeting{font-size:14px;color:#00e87a;letter-spacing:1px}
+
     .error-msg{color:#e84000;font-size:13px;min-height:18px;text-align:center}
     .gp-focus{box-shadow:0 0 12px rgba(0,180,255,.7);border-color:#00b4ff !important;outline:none}
+
+    /* ── Music toggle ──────────────────────────────────────── */
+    #music-toggle{
+      position:fixed;bottom:16px;left:16px;z-index:10;
+      width:42px;height:42px;border-radius:50%;
+      background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.15);
+      color:#aaa;font-size:20px;cursor:pointer;
+      display:flex;align-items:center;justify-content:center;
+      transition:all .15s;
+    }
+    #music-toggle:hover{background:rgba(0,180,255,.15);border-color:rgba(0,180,255,.3);color:#fff}
+    #music-toggle.muted{color:#555}
   </style>
 </head>
 <body>
@@ -111,6 +165,41 @@
 <div id="lobby">
   <h1>NEST RUN</h1>
   <div class="subtitle">Choose your role and enter the battlefield</div>
+
+  <!-- Auth / Account -->
+  <div class="auth-section" id="auth-section">
+    <!-- Login form (shown when logged out) -->
+    <div id="auth-form">
+      <div class="auth-label">Account</div>
+      <div class="auth-row" id="auth-name-row" style="display:none">
+        <input class="auth-input" id="auth-name" type="text" placeholder="Display name" maxlength="20" />
+      </div>
+      <div class="auth-row">
+        <input class="auth-input" id="auth-email" type="email" placeholder="Email" />
+        <input class="auth-input" id="auth-pass" type="password" placeholder="Password" />
+      </div>
+      <div class="auth-row">
+        <button class="auth-btn" id="btn-login">LOGIN</button>
+        <button class="auth-btn" id="btn-signup">SIGN UP</button>
+      </div>
+      <div class="auth-msg" id="auth-msg"></div>
+    </div>
+
+    <!-- Logged in view (shown when authenticated) -->
+    <div id="auth-user" style="display:none">
+      <div class="user-greeting" id="user-greeting"></div>
+      <div class="stats-bar" id="stats-bar">
+        <div class="stat-item"><span class="stat-val" id="stat-games">-</span><span class="stat-label">Games</span></div>
+        <div class="stat-item"><span class="stat-val" id="stat-shooter-wins">-</span><span class="stat-label">Shooter Wins</span></div>
+        <div class="stat-item"><span class="stat-val" id="stat-commander-wins">-</span><span class="stat-label">Commander Wins</span></div>
+        <div class="stat-item"><span class="stat-val" id="stat-kills">-</span><span class="stat-label">Kills</span></div>
+        <div class="stat-item"><span class="stat-val" id="stat-deaths">-</span><span class="stat-label">Deaths</span></div>
+      </div>
+      <div class="auth-row" style="margin-top:8px">
+        <button class="auth-btn danger" id="btn-logout">LOGOUT</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Role selector -->
   <div class="role-section">
@@ -401,6 +490,110 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 })();
 </script>
 
+<!-- Auth logic -->
+<script type="module">
+import { signIn, signUp, signOut, getSession, getUser, getDisplayName, getMyStats, isConfigured } from "./src/supabase.js";
+
+const authForm = document.getElementById("auth-form");
+const authUser = document.getElementById("auth-user");
+const authMsg = document.getElementById("auth-msg");
+const authEmail = document.getElementById("auth-email");
+const authPass = document.getElementById("auth-pass");
+const authName = document.getElementById("auth-name");
+const authNameRow = document.getElementById("auth-name-row");
+const btnLogin = document.getElementById("btn-login");
+const btnSignup = document.getElementById("btn-signup");
+const btnLogout = document.getElementById("btn-logout");
+
+if (!isConfigured()) {
+  document.getElementById("auth-section").style.display = "none";
+}
+
+let isSignUpMode = false;
+
+btnSignup.addEventListener("click", async () => {
+  if (!isSignUpMode) {
+    // First click: show name field and switch to sign-up mode
+    isSignUpMode = true;
+    authNameRow.style.display = "flex";
+    authName.focus();
+    btnSignup.textContent = "CREATE ACCOUNT";
+    authMsg.textContent = "";
+    return;
+  }
+  // Second click: actually sign up
+  authMsg.textContent = "";
+  const email = authEmail.value.trim();
+  const pass = authPass.value;
+  const name = authName.value.trim() || "Anonymous";
+  if (!email || !pass) { authMsg.textContent = "Email and password required"; return; }
+  if (pass.length < 6) { authMsg.textContent = "Password must be 6+ characters"; return; }
+  try {
+    await signUp(email, pass, name);
+    authMsg.style.color = "#00e87a";
+    authMsg.textContent = "Account created! Check your email to confirm, then login.";
+  } catch (e) {
+    authMsg.style.color = "#e84000";
+    authMsg.textContent = e.message || "Sign up failed";
+  }
+});
+
+btnLogin.addEventListener("click", async () => {
+  authMsg.textContent = "";
+  const email = authEmail.value.trim();
+  const pass = authPass.value;
+  if (!email || !pass) { authMsg.textContent = "Email and password required"; return; }
+  try {
+    await signIn(email, pass);
+    showLoggedIn();
+  } catch (e) {
+    authMsg.style.color = "#e84000";
+    authMsg.textContent = e.message || "Login failed";
+  }
+});
+
+btnLogout.addEventListener("click", async () => {
+  await signOut();
+  showLoggedOut();
+});
+
+async function showLoggedIn() {
+  const user = await getUser();
+  if (!user) { showLoggedOut(); return; }
+  authForm.style.display = "none";
+  authUser.style.display = "flex";
+  authUser.style.flexDirection = "column";
+  authUser.style.alignItems = "center";
+  authUser.style.gap = "10px";
+  document.getElementById("user-greeting").textContent = `Welcome, ${getDisplayName(user)}`;
+
+  const stats = await getMyStats();
+  if (stats) {
+    document.getElementById("stat-games").textContent = stats.games_played;
+    document.getElementById("stat-shooter-wins").textContent = stats.shooter_wins;
+    document.getElementById("stat-commander-wins").textContent = stats.commander_wins;
+    document.getElementById("stat-kills").textContent = stats.total_kills;
+    document.getElementById("stat-deaths").textContent = stats.total_deaths;
+  }
+}
+
+function showLoggedOut() {
+  authForm.style.display = "block";
+  authUser.style.display = "none";
+  isSignUpMode = false;
+  authNameRow.style.display = "none";
+  btnSignup.textContent = "SIGN UP";
+  authMsg.textContent = "";
+}
+
+// Check if already logged in on page load
+(async () => {
+  if (!isConfigured()) return;
+  const session = await getSession();
+  if (session) showLoggedIn();
+})();
+</script>
+
 <!-- Lobby logic -->
 <script type="module">
 import { getAvailableRooms } from "./src/network.js";
@@ -557,6 +750,45 @@ setInterval(pollRooms, 2000);
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
+})();
+</script>
+
+<!-- Music toggle -->
+<audio id="menu-music" src="./assets/music/menu.wav" loop preload="auto"></audio>
+<button id="music-toggle" title="Toggle music">&#128264;</button>
+<script>
+(function() {
+  const audio = document.getElementById("menu-music");
+  const btn = document.getElementById("music-toggle");
+  let playing = false;
+
+  function startMusic() {
+    audio.play().then(() => {
+      playing = true;
+      btn.innerHTML = "&#128264;";
+      btn.classList.remove("muted");
+    }).catch(() => {});
+  }
+
+  function stopMusic() {
+    audio.pause();
+    playing = false;
+    btn.innerHTML = "&#128263;";
+    btn.classList.add("muted");
+  }
+
+  btn.addEventListener("click", () => {
+    if (playing) stopMusic(); else startMusic();
+  });
+
+  // Autoplay on first user interaction
+  function autoplay() {
+    if (!playing) startMusic();
+    document.removeEventListener("click", autoplay);
+    document.removeEventListener("keydown", autoplay);
+  }
+  document.addEventListener("click", autoplay);
+  document.addEventListener("keydown", autoplay);
 })();
 </script>
 </body>

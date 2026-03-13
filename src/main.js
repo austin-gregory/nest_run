@@ -5,6 +5,7 @@ import { attachInput } from "./input.js";
 import { createWorld } from "./world.js";
 import { createWeaponView } from "./weaponView.js";
 import { connectToGame, createRoom, joinRoom } from "./network.js";
+import { recordGame, getUser, getDisplayName } from "./supabase.js";
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -1764,7 +1765,11 @@ export async function initGame() {
   }
 
   function showStartScreen() {
-    return new Promise((resolve) => {
+    return new Promise(async (resolve) => {
+      // Get name from Supabase auth if logged in, otherwise "Anonymous"
+      const user = await getUser();
+      const name = user ? getDisplayName(user) : "Anonymous";
+
       const ov = document.createElement("div");
       ov.style.cssText = [
         "position:fixed", "inset:0", "display:flex", "flex-direction:column",
@@ -1781,18 +1786,6 @@ export async function initGame() {
       sub.textContent = "Escort the rail car to the alien nest";
       sub.style.cssText = "color:#aaa;font-size:16px;margin:0;letter-spacing:1px;";
 
-      const nameInput = document.createElement("input");
-      nameInput.type = "text";
-      nameInput.placeholder = "Enter your name";
-      nameInput.maxLength = 20;
-      nameInput.style.cssText = [
-        "padding:10px 20px", "font-size:20px", "font-family:monospace",
-        "background:#111", "color:#fff", "border:2px solid #444",
-        "border-radius:6px", "outline:none", "text-align:center", "width:260px",
-      ].join(";");
-      nameInput.onfocus = () => nameInput.style.borderColor = "#00b4ff";
-      nameInput.onblur  = () => nameInput.style.borderColor = "#444";
-
       const lb = document.createElement("div");
       lb.style.cssText = "color:#fff;font-family:monospace;text-align:center;";
       lb.innerHTML = '<div style="color:rgba(0,190,255,.5);font-size:11px;letter-spacing:.2em;margin-bottom:8px;text-transform:uppercase;">Top 3</div>';
@@ -1802,144 +1795,22 @@ export async function initGame() {
       let startScreenGpNav = null;
       const start = () => {
         if (startScreenGpNav) startScreenGpNav.stop();
-        playerName = nameInput.value.trim() || "Anonymous";
+        playerName = name;
         document.body.removeChild(ov);
         resolve(playerName);
       };
       btn.onclick = start;
-      nameInput.onkeydown = (e) => { if (e.key === "Enter") start(); };
 
-      // ── On-screen keyboard for gamepad ──────────────────────
-      const ALPHA_ROWS = [
-        ["Q","W","E","R","T","Y","U","I","O","P"],
-        ["A","S","D","F","G","H","J","K","L"],
-        ["Z","X","C","V","B","N","M"],
-      ];
-      const NUM_ROW = ["1","2","3","4","5","6","7","8","9","0"];
-      const SPECIAL = ["123","SPACE","⌫","DONE"];
+      startScreenGpNav = gamepadMenuNav([btn]);
 
-      const kbWrap = document.createElement("div");
-      kbWrap.style.cssText = "display:none;flex-direction:column;align-items:center;gap:4px;margin-top:8px;padding:10px;background:rgba(0,0,0,0.6);border-radius:8px;";
-
-      let showNums = false;
-      let kbGrid = []; // 2D array of button elements
-      let kbRow = 0, kbCol = 0;
-      let kbRunning = false;
-      let kbLastDpad = 0;
-      let kbLastA = false;
-      let kbLastStart = false;
-      const KB_REPEAT = 180;
-      const KB_GLOW = "0 0 8px rgba(0,180,255,.8)";
-
-      function buildKeyboard() {
-        kbWrap.innerHTML = "";
-        kbGrid = [];
-        const rows = showNums ? [NUM_ROW] : ALPHA_ROWS;
-        rows.forEach(row => {
-          const rowEl = document.createElement("div");
-          rowEl.style.cssText = "display:flex;gap:4px;justify-content:center;";
-          const rowBtns = [];
-          row.forEach(ch => {
-            const k = document.createElement("button");
-            k.textContent = ch;
-            k.style.cssText = "width:36px;height:36px;font-size:16px;font-family:monospace;background:#1a1a2e;color:#fff;border:2px solid #333;border-radius:4px;cursor:pointer;padding:0;";
-            k.onmouseenter = () => { k.style.background = "#2a2a4e"; };
-            k.onmouseleave = () => { k.style.background = "#1a1a2e"; };
-            k.onclick = () => { nameInput.value += ch; nameInput.focus(); };
-            rowEl.appendChild(k);
-            rowBtns.push(k);
-          });
-          kbWrap.appendChild(rowEl);
-          kbGrid.push(rowBtns);
-        });
-        // Special row
-        const specRow = document.createElement("div");
-        specRow.style.cssText = "display:flex;gap:4px;justify-content:center;margin-top:2px;";
-        const specBtns = [];
-        SPECIAL.forEach(label => {
-          const k = document.createElement("button");
-          k.textContent = label;
-          const wide = label === "SPACE" ? "width:120px;" : label === "DONE" ? "width:64px;" : "width:48px;";
-          k.style.cssText = wide + "height:36px;font-size:13px;font-family:monospace;background:#1a1a2e;color:#0cf;border:2px solid #333;border-radius:4px;cursor:pointer;padding:0;";
-          k.onmouseenter = () => { k.style.background = "#2a2a4e"; };
-          k.onmouseleave = () => { k.style.background = "#1a1a2e"; };
-          k.onclick = () => {
-            if (label === "123") { showNums = !showNums; buildKeyboard(); highlightKB(); }
-            else if (label === "SPACE") { nameInput.value += " "; }
-            else if (label === "⌫") { nameInput.value = nameInput.value.slice(0, -1); }
-            else if (label === "DONE") { start(); }
-          };
-          specRow.appendChild(k);
-          specBtns.push(k);
-        });
-        kbWrap.appendChild(specRow);
-        kbGrid.push(specBtns);
-      }
-
-      function highlightKB() {
-        if (kbRow >= kbGrid.length) kbRow = kbGrid.length - 1;
-        if (kbCol >= kbGrid[kbRow].length) kbCol = kbGrid[kbRow].length - 1;
-        kbGrid.forEach((row, r) => row.forEach((b, c) => {
-          b.style.boxShadow = (r === kbRow && c === kbCol) ? KB_GLOW : "";
-          b.style.borderColor = (r === kbRow && c === kbCol) ? "#00b4ff" : "#333";
-        }));
-      }
-
-      buildKeyboard();
-
-      function kbLoop() {
-        if (!kbRunning) return;
-        const gp = navigator.getGamepads ? navigator.getGamepads()[0] : null;
-        if (gp) {
-          // Show keyboard when gamepad detected
-          if (kbWrap.style.display === "none") {
-            kbWrap.style.display = "flex";
-            highlightKB();
-          }
-          const now = performance.now();
-          const dU = gp.buttons[12] && gp.buttons[12].pressed;
-          const dD = gp.buttons[13] && gp.buttons[13].pressed;
-          const dL = gp.buttons[14] && gp.buttons[14].pressed;
-          const dR = gp.buttons[15] && gp.buttons[15].pressed;
-          const sX = Math.abs(gp.axes[0]) > 0.5 ? Math.sign(gp.axes[0]) : 0;
-          const sY = Math.abs(gp.axes[1]) > 0.5 ? Math.sign(gp.axes[1]) : 0;
-          const dirY = (dD ? 1 : 0) - (dU ? 1 : 0) || sY;
-          const dirX = (dR ? 1 : 0) - (dL ? 1 : 0) || sX;
-          if ((dirX || dirY) && now - kbLastDpad > KB_REPEAT) {
-            if (dirY) {
-              kbRow = (kbRow + (dirY > 0 ? 1 : kbGrid.length - 1)) % kbGrid.length;
-              if (kbCol >= kbGrid[kbRow].length) kbCol = kbGrid[kbRow].length - 1;
-            }
-            if (dirX) {
-              kbCol = (kbCol + (dirX > 0 ? 1 : kbGrid[kbRow].length - 1)) % kbGrid[kbRow].length;
-            }
-            highlightKB();
-            kbLastDpad = now;
-          } else if (!dirX && !dirY) {
-            kbLastDpad = 0;
-          }
-          const aPressed = gp.buttons[0] && gp.buttons[0].pressed;
-          if (aPressed && !kbLastA) {
-            kbGrid[kbRow][kbCol].click();
-          }
-          kbLastA = aPressed;
-          const startPressed = gp.buttons[9] && gp.buttons[9].pressed;
-          if (startPressed && !kbLastStart) start();
-          kbLastStart = startPressed;
-        }
-        requestAnimationFrame(kbLoop);
-      }
-      kbRunning = true;
-      requestAnimationFrame(kbLoop);
-      startScreenGpNav = { stop() { kbRunning = false; } };
-
-      ov.append(title, sub, nameInput, kbWrap, lb, btn);
+      ov.append(title, sub, lb, btn);
       document.body.appendChild(ov);
     });
   }
 
   async function showWinOverlay() {
     document.exitPointerLock();
+    recordGame({ role: "fps", won: true, kills: game.kills, deaths: game.deaths });
     let top3 = [];
     try {
       const res = await fetch("/api/leaderboard", {
@@ -1982,6 +1853,9 @@ export async function initGame() {
   function showGameOver(winner) {
     document.exitPointerLock();
     game.win = true;
+    if (winner !== "disconnect") {
+      recordGame({ role: "fps", won: winner === "fps", kills: game.kills, deaths: game.deaths });
+    }
     const ov = document.createElement("div");
     ov.style.cssText = [
       "position:fixed", "inset:0", "display:flex", "flex-direction:column",

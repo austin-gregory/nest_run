@@ -2,6 +2,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 import { WORLD, RTS } from "./constants.js";
 import { createWorld } from "./world.js";
 import { connectToGame, createRoom, joinRoom } from "./network.js";
+import { recordGame } from "./supabase.js";
 
 export async function initRTS() {
   const overlay = document.getElementById("rts-overlay");
@@ -826,6 +827,9 @@ export async function initRTS() {
 
   // ── Game over screen ───────────────────────────────────────────────────
   function showGameOverRTS(winner) {
+    if (winner !== "disconnect") {
+      recordGame({ role: "rts", won: winner === "rts", kills: 0, deaths: 0 });
+    }
     const ov = document.createElement("div");
     ov.style.cssText = [
       "position:fixed", "inset:0", "display:flex", "flex-direction:column",
