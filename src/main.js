@@ -900,22 +900,28 @@ export async function initGame() {
 
     group.add(model);
 
-    // Apply gun_hold pose if available
+    // Set up animations (gun_hold = idle, gun_hold_walk = walking)
     let mixer = null;
+    let actions = { idle: null, walk: null };
     const clips = humanGLTF.animations;
     if (clips && clips.length > 0) {
-      const gunHoldClip = THREE.AnimationClip.findByName(clips, "gun_hold");
-      if (gunHoldClip) {
-        mixer = new THREE.AnimationMixer(model);
-        const action = mixer.clipAction(gunHoldClip);
-        action.setLoop(THREE.LoopOnce, 1);
-        action.clampWhenFinished = true;
-        action.play();
-        mixer.setTime(0);
+      mixer = new THREE.AnimationMixer(model);
+      const idleClip = THREE.AnimationClip.findByName(clips, "gun_hold");
+      const walkClip = THREE.AnimationClip.findByName(clips, "gun_hold_walk");
+      if (idleClip) {
+        actions.idle = mixer.clipAction(idleClip);
+        actions.idle.setLoop(THREE.LoopOnce, 1);
+        actions.idle.clampWhenFinished = true;
+        actions.idle.play();
       }
+      if (walkClip) {
+        actions.walk = mixer.clipAction(walkClip);
+        actions.walk.setLoop(THREE.LoopRepeat, Infinity);
+      }
+      mixer.setTime(0);
     }
 
-    return { group, model, mixer };
+    return { group, model, mixer, actions, curAction: "idle" };
   }
 
   const _otherCustomizations = new Map(); // sessionId -> { base, head, torso, arms, legs }
@@ -987,8 +993,19 @@ export async function initGame() {
       dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
       g.rotation.y += dyaw * rate;
 
-      // Update animation mixer (keeps GunHold pose applied)
-      if (op.mixer) op.mixer.update(dt);
+      // Switch between idle/walk based on movement
+      if (op.mixer && op.actions) {
+        const dx = op._tx - g.position.x;
+        const dz = op._tz - g.position.z;
+        const moving = (dx * dx + dz * dz) > 0.001;
+        const wanted = moving ? "walk" : "idle";
+        if (wanted !== op.curAction && op.actions[wanted]) {
+          if (op.actions[op.curAction]) op.actions[op.curAction].fadeOut(0.2);
+          op.actions[wanted].reset().fadeIn(0.2).play();
+          op.curAction = wanted;
+        }
+        op.mixer.update(dt);
+      }
     }
   }
   // ──────────────────────────────────────────────────────────────────────
