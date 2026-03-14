@@ -814,11 +814,11 @@ export async function initGame() {
   }
 
   // ── Other FPS players (human model) ──────────────────────────────────
-  const otherPlayers = new Map(); // sessionId → { group, model, gun }
+  const otherPlayers = new Map(); // sessionId → { group, model, mixer }
   const FPS_COLORS = WORLD.FPS_COLORS;
 
-  // Pre-load human + gun models (reuses GLTFLoader + SkeletonUtils already imported for bugs)
-  let humanGLTF = null, gunGLTF = null;
+  // Pre-load human model (gun is now part of HumanBase.glb)
+  let humanGLTF = null;
   {
     const [{ GLTFLoader }, su] = await Promise.all([
       import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm"),
@@ -826,10 +826,7 @@ export async function initGame() {
     ]);
     if (!skeletonClone) skeletonClone = su.clone;
     const loader = new GLTFLoader();
-    [humanGLTF, gunGLTF] = await Promise.all([
-      loader.loadAsync("./assets/HumanBase.glb"),
-      loader.loadAsync("./assets/smg.glb"),
-    ]);
+    humanGLTF = await loader.loadAsync("./assets/HumanBase.glb");
   }
 
   // Zone mapping: joint index -> body zone (based on HumanBase.glb skeleton)
@@ -855,10 +852,12 @@ export async function initGame() {
 
     model.traverse((obj) => {
       if (!obj.isMesh || !obj.geometry) return;
+      // Skip gun meshes — only color the player body (basemesh_male)
+      if (!obj.name.startsWith("basemesh_male")) return;
       const geo = obj.geometry;
       const joints = geo.getAttribute("skinIndex");
       if (!joints) {
-        // No skinning data — use base color
+        // No joint data — apply base color
         obj.material = new THREE.MeshStandardMaterial({ color: base, roughness: 0.6 });
         return;
       }
@@ -884,36 +883,39 @@ export async function initGame() {
     const color = FPS_COLORS[colorIndex] || 0x00cc44;
     const group = new THREE.Group();
 
-    // Clone only the male rig subtree
-    const maleRig = humanGLTF.scene.getObjectByName("basemesh_male_rig");
-    const model = skeletonClone(maleRig);
+    // Clone the full scene to preserve bone hierarchy
+    const model = skeletonClone(humanGLTF.scene);
     model.scale.setScalar(1.35);
     model.rotation.y = Math.PI; // face forward
 
     if (customColors && customColors.base) {
       applyZoneColors(model, customColors);
     } else {
-      // Default: single color from FPS_COLORS
+      // Default: single color from FPS_COLORS (skip gun meshes)
       const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
-      model.traverse((obj) => { if (obj.isMesh) obj.material = mat; });
+      model.traverse((obj) => {
+        if (obj.isMesh && obj.name.startsWith("basemesh_male")) obj.material = mat;
+      });
     }
 
     group.add(model);
 
-    // Gun model attached to right hand bone
-    const gun = gunGLTF.scene.clone(true);
-    gun.scale.setScalar(0.14);
-    gun.rotation.set(0, Math.PI, 0);
-    const rightHand = model.getObjectByName("hand.R");
-    if (rightHand) {
-      gun.position.set(0, 0.05, 0);
-      rightHand.add(gun);
-    } else {
-      gun.position.set(0.55, 1.3, -0.3);
-      group.add(gun);
+    // Apply gun_hold pose if available
+    let mixer = null;
+    const clips = humanGLTF.animations;
+    if (clips && clips.length > 0) {
+      const gunHoldClip = THREE.AnimationClip.findByName(clips, "gun_hold");
+      if (gunHoldClip) {
+        mixer = new THREE.AnimationMixer(model);
+        const action = mixer.clipAction(gunHoldClip);
+        action.setLoop(THREE.LoopOnce, 1);
+        action.clampWhenFinished = true;
+        action.play();
+        mixer.setTime(0);
+      }
     }
 
-    return { group, model, gun };
+    return { group, model, mixer };
   }
 
   const _otherCustomizations = new Map(); // sessionId -> { base, head, torso, arms, legs }
@@ -984,6 +986,9 @@ export async function initGame() {
       let dyaw = op._tyaw - g.rotation.y;
       dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
       g.rotation.y += dyaw * rate;
+
+      // Update animation mixer (keeps GunHold pose applied)
+      if (op.mixer) op.mixer.update(dt);
     }
   }
   // ──────────────────────────────────────────────────────────────────────
