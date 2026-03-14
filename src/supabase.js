@@ -99,6 +99,50 @@ export async function recordGame({ role, won, kills, deaths }) {
   }
 }
 
+/** Fetch character customization for the current user */
+export async function getMyCustomization() {
+  const token = await getAccessToken();
+  if (!token) return null;
+  try {
+    const res = await fetch("/api/customization", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    // Cache to localStorage
+    localStorage.setItem("playerCustomization", JSON.stringify(data));
+    return data;
+  } catch { return null; }
+}
+
+/** Save character customization */
+export async function saveCustomization(colors) {
+  const token = await getAccessToken();
+  if (!token) return false;
+  try {
+    const res = await fetch("/api/customization", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(colors),
+    });
+    if (res.ok) {
+      localStorage.setItem("playerCustomization", JSON.stringify(colors));
+    }
+    return res.ok;
+  } catch { return false; }
+}
+
+/** Get cached customization from localStorage */
+export function getCachedCustomization() {
+  try {
+    const stored = localStorage.getItem("playerCustomization");
+    return stored ? JSON.parse(stored) : null;
+  } catch { return null; }
+}
+
 /** Check if Supabase is configured */
 export function isConfigured() {
   return !!(SUPABASE_URL && SUPABASE_ANON_KEY);

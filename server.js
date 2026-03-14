@@ -201,6 +201,93 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /api/customization — get current user's character customization
+  if (req.method === "GET" && urlPath === "/api/customization") {
+    try {
+      const user = await getUserFromToken(req);
+      if (!user) return send(res, 401, JSON.stringify({ error: "unauthorized" }), "application/json");
+
+      const { data, error } = await supabase
+        .from("player_customization")
+        .select("*")
+        .eq("user_id", user.id)
+        .single();
+
+      if (error && error.code === "PGRST116") {
+        return send(res, 200, JSON.stringify({
+          base_color: "#00cc44", head_color: null, torso_color: null, arms_color: null, legs_color: null,
+        }), "application/json");
+      }
+      if (error) return send(res, 500, JSON.stringify({ error: error.message }), "application/json");
+      send(res, 200, JSON.stringify(data), "application/json");
+    } catch (e) {
+      send(res, 500, JSON.stringify({ error: e.message }), "application/json");
+    }
+    return;
+  }
+
+  // PUT /api/customization — save character customization
+  if (req.method === "PUT" && urlPath === "/api/customization") {
+    try {
+      const user = await getUserFromToken(req);
+      if (!user) return send(res, 401, JSON.stringify({ error: "unauthorized" }), "application/json");
+
+      const body = await readBody(req);
+      const { base_color, head_color, torso_color, arms_color, legs_color } = JSON.parse(body);
+
+      const hexRe = /^#[0-9a-fA-F]{6}$/;
+      if (!base_color || !hexRe.test(base_color))
+        return send(res, 400, JSON.stringify({ error: "invalid base_color" }), "application/json");
+      for (const c of [head_color, torso_color, arms_color, legs_color]) {
+        if (c !== null && !hexRe.test(c))
+          return send(res, 400, JSON.stringify({ error: "invalid zone color" }), "application/json");
+      }
+
+      const row = {
+        user_id: user.id,
+        base_color,
+        head_color: head_color || null,
+        torso_color: torso_color || null,
+        arms_color: arms_color || null,
+        legs_color: legs_color || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from("player_customization")
+        .upsert(row, { onConflict: "user_id" });
+
+      if (error) return send(res, 500, JSON.stringify({ error: error.message }), "application/json");
+      send(res, 200, JSON.stringify({ ok: true }), "application/json");
+    } catch (e) {
+      send(res, 500, JSON.stringify({ error: e.message }), "application/json");
+    }
+    return;
+  }
+
+  // GET /api/customization/:userId — get any user's customization (public)
+  if (req.method === "GET" && urlPath.startsWith("/api/customization/")) {
+    try {
+      const userId = urlPath.split("/api/customization/")[1];
+      if (!userId) return send(res, 400, JSON.stringify({ error: "missing userId" }), "application/json");
+
+      const { data, error } = await supabase
+        .from("player_customization")
+        .select("*")
+        .eq("user_id", userId)
+        .single();
+
+      if (error && error.code === "PGRST116") {
+        return send(res, 200, JSON.stringify({ base_color: null }), "application/json");
+      }
+      if (error) return send(res, 500, JSON.stringify({ error: error.message }), "application/json");
+      send(res, 200, JSON.stringify(data), "application/json");
+    } catch (e) {
+      send(res, 500, JSON.stringify({ error: e.message }), "application/json");
+    }
+    return;
+  }
+
   // ── Static files (inject Supabase config into HTML) ───────────────────
   const relPath = urlPath === "/" ? `/${DEFAULT_FILE}` : urlPath;
   const filePath = safeJoin(ROOT, relPath);

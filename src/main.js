@@ -5,7 +5,7 @@ import { attachInput } from "./input.js";
 import { createWorld } from "./world.js";
 import { createWeaponView } from "./weaponView.js";
 import { connectToGame, createRoom, joinRoom } from "./network.js";
-import { recordGame, getUser, getDisplayName } from "./supabase.js";
+import { recordGame, getUser, getDisplayName, getCachedCustomization } from "./supabase.js";
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -832,7 +832,55 @@ export async function initGame() {
     ]);
   }
 
-  function createPlayerModel(colorIndex) {
+  // Zone mapping: joint index -> body zone (based on HumanBase.glb skeleton)
+  // 0=hips,1=spine,2=chest -> torso; 3=neck,4=head -> head;
+  // 5-27=left arm/hand, 28-50=right arm/hand -> arms;
+  // 51-54=left leg, 55-58=right leg -> legs
+  const JOINT_ZONE = [];
+  for (let i = 0; i <= 58; i++) {
+    if (i <= 2) JOINT_ZONE[i] = "torso";
+    else if (i <= 4) JOINT_ZONE[i] = "head";
+    else if (i <= 50) JOINT_ZONE[i] = "arms";
+    else JOINT_ZONE[i] = "legs";
+  }
+
+  function applyZoneColors(model, customColors) {
+    const base = new THREE.Color(customColors.base);
+    const zoneColors = {
+      head:  new THREE.Color(customColors.head || customColors.base),
+      torso: new THREE.Color(customColors.torso || customColors.base),
+      arms:  new THREE.Color(customColors.arms || customColors.base),
+      legs:  new THREE.Color(customColors.legs || customColors.base),
+    };
+
+    model.traverse((obj) => {
+      if (!obj.isMesh || !obj.geometry) return;
+      const geo = obj.geometry;
+      const joints = geo.getAttribute("skinIndex");
+      if (!joints) {
+        // No skinning data — use base color
+        obj.material = new THREE.MeshStandardMaterial({ color: base, roughness: 0.6 });
+        return;
+      }
+
+      // Create a vertex color buffer based on zone per vertex
+      const count = geo.getAttribute("position").count;
+      const colors = new Float32Array(count * 3);
+      for (let i = 0; i < count; i++) {
+        // Get the dominant joint (highest weight, usually the first one)
+        const jointIdx = joints.getX(i);
+        const zone = JOINT_ZONE[jointIdx] || "torso";
+        const c = zoneColors[zone];
+        colors[i * 3] = c.r;
+        colors[i * 3 + 1] = c.g;
+        colors[i * 3 + 2] = c.b;
+      }
+      geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      obj.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
+    });
+  }
+
+  function createPlayerModel(colorIndex, customColors) {
     const color = FPS_COLORS[colorIndex] || 0x00cc44;
     const group = new THREE.Group();
 
@@ -842,9 +890,13 @@ export async function initGame() {
     model.scale.setScalar(1.35);
     model.rotation.y = Math.PI; // face forward
 
-    // Tint all meshes with the player's color
-    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
-    model.traverse((obj) => { if (obj.isMesh) obj.material = mat; });
+    if (customColors && customColors.base) {
+      applyZoneColors(model, customColors);
+    } else {
+      // Default: single color from FPS_COLORS
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
+      model.traverse((obj) => { if (obj.isMesh) obj.material = mat; });
+    }
 
     group.add(model);
 
@@ -864,6 +916,8 @@ export async function initGame() {
     return { group, model, gun };
   }
 
+  const _otherCustomizations = new Map(); // sessionId -> { base, head, torso, arms, legs }
+
   function syncOtherPlayers(state, mySessionId) {
     const seen = new Set();
     state.players.forEach((p, sid) => {
@@ -873,7 +927,8 @@ export async function initGame() {
 
       let op = otherPlayers.get(sid);
       if (!op) {
-        op = createPlayerModel(p.colorIndex);
+        const customColors = _otherCustomizations.get(sid) || null;
+        op = createPlayerModel(p.colorIndex, customColors);
         op._tx = p.x; op._ty = p.y; op._tz = p.z;
         op._tyaw = p.yaw; op._tpitch = p.pitch;
         scene.add(op.group);
@@ -894,6 +949,27 @@ export async function initGame() {
         otherPlayers.delete(sid);
       }
     }
+  }
+
+  // Rebuild an existing other player's model with new customization
+  function rebuildOtherPlayer(sid, colors) {
+    _otherCustomizations.set(sid, colors);
+    const op = otherPlayers.get(sid);
+    if (!op) return; // they'll get it when spawned
+    // Remove old model, create new one with custom colors
+    const pos = op.group.position.clone();
+    const rot = op.group.rotation.clone();
+    scene.remove(op.group);
+    const state = room && room.state;
+    const p = state && state.players.get(sid);
+    const colorIndex = p ? p.colorIndex : 0;
+    const newOp = createPlayerModel(colorIndex, colors);
+    newOp.group.position.copy(pos);
+    newOp.group.rotation.copy(rot);
+    newOp._tx = op._tx; newOp._ty = op._ty; newOp._tz = op._tz;
+    newOp._tyaw = op._tyaw; newOp._tpitch = op._tpitch;
+    scene.add(newOp.group);
+    otherPlayers.set(sid, newOp);
   }
 
   function lerpOtherPlayers(dt) {
@@ -1764,50 +1840,6 @@ export async function initGame() {
     };
   }
 
-  function showStartScreen() {
-    return new Promise(async (resolve) => {
-      // Get name from Supabase auth if logged in, otherwise "Anonymous"
-      const user = await getUser();
-      const name = user ? getDisplayName(user) : "Anonymous";
-
-      const ov = document.createElement("div");
-      ov.style.cssText = [
-        "position:fixed", "inset:0", "display:flex", "flex-direction:column",
-        "align-items:center", "justify-content:center",
-        "background:rgba(0,0,0,0.87)", "z-index:999", "gap:14px",
-        "font-family:monospace",
-      ].join(";");
-
-      const title = document.createElement("h1");
-      title.textContent = "NEST RUN";
-      title.style.cssText = "color:#fff;font-size:68px;margin:0;letter-spacing:8px;";
-
-      const sub = document.createElement("p");
-      sub.textContent = "Escort the rail car to the alien nest";
-      sub.style.cssText = "color:#aaa;font-size:16px;margin:0;letter-spacing:1px;";
-
-      const lb = document.createElement("div");
-      lb.style.cssText = "color:#fff;font-family:monospace;text-align:center;";
-      lb.innerHTML = '<div style="color:rgba(0,190,255,.5);font-size:11px;letter-spacing:.2em;margin-bottom:8px;text-transform:uppercase;">Top 3</div>';
-      fetch("/api/leaderboard").then(r => r.json()).then(top3 => lbRows(lb, top3)).catch(() => {});
-
-      const btn = makeOverlayBtn("▶  PLAY");
-      let startScreenGpNav = null;
-      const start = () => {
-        if (startScreenGpNav) startScreenGpNav.stop();
-        playerName = name;
-        document.body.removeChild(ov);
-        resolve(playerName);
-      };
-      btn.onclick = start;
-
-      startScreenGpNav = gamepadMenuNav([btn]);
-
-      ov.append(title, sub, lb, btn);
-      document.body.appendChild(ov);
-    });
-  }
-
   async function showWinOverlay() {
     document.exitPointerLock();
     recordGame({ role: "fps", won: true, kills: game.kills, deaths: game.deaths });
@@ -2236,7 +2268,9 @@ export async function initGame() {
   }
 
   renderer.render(scene, camera);
-  playerName = await showStartScreen();
+  // Get player name from auth (skip old start screen)
+  const user = await getUser();
+  playerName = user ? getDisplayName(user) : "Anonymous";
   ui.msg("Click the game to lock mouse.");
 
   // ── Multiplayer connection ─────────────────────────────────────────────
@@ -2496,6 +2530,28 @@ export async function initGame() {
         smoothCamY = player.pos.y;
         smoothGroundY = map.gy(sp.x, sp.z);
         player.yaw = sp.yaw;
+      }
+    });
+
+    // Send our customization to the room
+    const myCustom = getCachedCustomization();
+    if (myCustom && myCustom.base_color) {
+      room.send("customization", {
+        base: myCustom.base_color,
+        head: myCustom.head_color || null,
+        torso: myCustom.torso_color || null,
+        arms: myCustom.arms_color || null,
+        legs: myCustom.legs_color || null,
+      });
+    }
+
+    // Receive other players' customizations
+    room.onMessage("playerCustomization", (data) => {
+      rebuildOtherPlayer(data.sid, data.colors);
+    });
+    room.onMessage("allCustomizations", (data) => {
+      for (const [sid, colors] of Object.entries(data)) {
+        _otherCustomizations.set(sid, colors);
       }
     });
 

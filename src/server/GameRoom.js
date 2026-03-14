@@ -164,6 +164,7 @@ class GameRoom extends Room {
     this._trapHp = {};              // trapIndex → remaining HP
     this._trappedPlayers = new Map(); // playerSid → { trapIndex, endTime }
     this._eggSacPositions = generateEggSacPositions();
+    this._customizations = new Map(); // sessionId -> { base, head, torso, arms, legs }
 
     // Room name from options
     const roomName = (options && options.roomName) || "Game Room";
@@ -431,6 +432,20 @@ class GameRoom extends Room {
       }
     });
 
+    // Player sends their character customization
+    this.onMessage("customization", (client, data) => {
+      const colors = {
+        base: data.base || null,
+        head: data.head || null,
+        torso: data.torso || null,
+        arms: data.arms || null,
+        legs: data.legs || null,
+      };
+      this._customizations.set(client.sessionId, colors);
+      // Broadcast to all other clients
+      this.broadcast("playerCustomization", { sid: client.sessionId, colors }, { except: client });
+    });
+
     // FPS player requests game start
     this.onMessage("requestStart", (client, data) => {
       if (this.state.phase !== "waiting") return;
@@ -491,6 +506,13 @@ class GameRoom extends Room {
     // Notify client of their role and color
     client.send("roleAssign", { role: player.role, colorIndex: player.colorIndex });
 
+    // Send existing player customizations to the new joiner
+    const allCustomizations = {};
+    this._customizations.forEach((colors, sid) => { allCustomizations[sid] = colors; });
+    if (Object.keys(allCustomizations).length > 0) {
+      client.send("allCustomizations", allCustomizations);
+    }
+
     // Clear any pending disconnect timer for a reconnecting slot
     if (this._disconnectTimers[client.sessionId]) {
       clearTimeout(this._disconnectTimers[client.sessionId]);
@@ -505,6 +527,7 @@ class GameRoom extends Room {
   async onLeave(client, consented) {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
+    this._customizations.delete(client.sessionId);
 
     const leavingRole = player.role;
 

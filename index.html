@@ -147,6 +147,68 @@
     .error-msg{color:#e84000;font-size:13px;min-height:18px;text-align:center}
     .gp-focus{box-shadow:0 0 12px rgba(0,180,255,.7);border-color:#00b4ff !important;outline:none}
 
+    /* ── Customization modal ──────────────────────────────── */
+    #customize-modal{
+      display:none;position:fixed;inset:0;z-index:100;
+      background:rgba(0,0,0,.92);
+      font-family:'Courier New',Courier,monospace;color:#fff;
+    }
+    #customize-modal.open{display:flex;align-items:center;justify-content:center}
+    .cust-container{
+      display:flex;gap:24px;max-width:800px;width:95%;max-height:90vh;
+    }
+    .cust-preview{
+      flex:1;min-width:250px;position:relative;
+      background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.1);border-radius:6px;
+      overflow:hidden;
+    }
+    .cust-preview canvas{width:100%!important;height:100%!important;display:block}
+    .cust-panel{
+      flex:1;min-width:250px;display:flex;flex-direction:column;gap:12px;
+      overflow-y:auto;padding:10px 0;
+    }
+    .cust-title{font-size:18px;letter-spacing:4px;color:#00b4ff;text-align:center}
+    .cust-zone{
+      display:flex;align-items:center;gap:10px;
+      padding:8px 12px;background:rgba(255,255,255,.03);
+      border:1px solid rgba(255,255,255,.08);border-radius:4px;
+    }
+    .cust-zone.active{border-color:rgba(0,180,255,.4);background:rgba(0,180,255,.06)}
+    .cust-zone-label{flex:1;font-size:13px;letter-spacing:1px;text-transform:uppercase}
+    .cust-zone input[type="color"]{
+      width:36px;height:28px;border:1px solid rgba(255,255,255,.2);
+      border-radius:3px;background:transparent;cursor:pointer;padding:0;
+    }
+    .cust-zone input[type="checkbox"]{cursor:pointer}
+    .cust-base-row{
+      display:flex;align-items:center;gap:10px;justify-content:center;
+      padding:10px;background:rgba(0,180,255,.06);
+      border:1px solid rgba(0,180,255,.2);border-radius:4px;
+    }
+    .cust-base-row label{font-size:12px;letter-spacing:2px;color:#00b4ff;text-transform:uppercase}
+    .cust-base-row input[type="color"]{
+      width:48px;height:32px;border:1px solid rgba(0,180,255,.3);
+      border-radius:3px;background:transparent;cursor:pointer;padding:0;
+    }
+    .cust-btns{display:flex;gap:10px;justify-content:center;margin-top:8px}
+    .cust-btn{
+      padding:8px 20px;font-size:12px;font-family:inherit;
+      background:rgba(0,180,255,.15);color:#00b4ff;
+      border:1px solid rgba(0,180,255,.3);border-radius:4px;
+      cursor:pointer;letter-spacing:2px;transition:all .15s;
+    }
+    .cust-btn:hover{background:rgba(0,180,255,.25);color:#00e0ff}
+    .cust-btn.save{background:rgba(0,232,122,.15);color:#00e87a;border-color:rgba(0,232,122,.3)}
+    .cust-btn.save:hover{background:rgba(0,232,122,.25)}
+    .cust-btn.close{background:rgba(255,60,60,.1);color:#f66;border-color:rgba(255,60,60,.3)}
+    .cust-btn.close:hover{background:rgba(255,60,60,.2)}
+    .cust-msg{font-size:11px;color:#00e87a;text-align:center;min-height:14px}
+
+    @media(max-width:640px){
+      .cust-container{flex-direction:column}
+      .cust-preview{min-height:250px}
+    }
+
     /* ── Music toggle ──────────────────────────────────────── */
     #music-toggle{
       position:fixed;bottom:16px;left:16px;z-index:10;
@@ -196,6 +258,7 @@
         <div class="stat-item"><span class="stat-val" id="stat-deaths">-</span><span class="stat-label">Deaths</span></div>
       </div>
       <div class="auth-row" style="margin-top:8px">
+        <button class="auth-btn" id="btn-customize">CUSTOMIZE SHOOTER</button>
         <button class="auth-btn danger" id="btn-logout">LOGOUT</button>
       </div>
     </div>
@@ -751,6 +814,277 @@ setInterval(pollRooms, 2000);
   }
   requestAnimationFrame(loop);
 })();
+</script>
+
+<!-- Customization modal -->
+<div id="customize-modal">
+  <div class="cust-container">
+    <div class="cust-preview"><canvas id="cust-canvas"></canvas></div>
+    <div class="cust-panel">
+      <div class="cust-title">CUSTOMIZE</div>
+      <div class="cust-base-row">
+        <label>Base Color</label>
+        <input type="color" id="cust-base" value="#00cc44" />
+      </div>
+      <div class="cust-zone" data-zone="head">
+        <input type="checkbox" id="cust-head-on" />
+        <span class="cust-zone-label">Head</span>
+        <input type="color" id="cust-head" value="#00cc44" disabled />
+      </div>
+      <div class="cust-zone" data-zone="torso">
+        <input type="checkbox" id="cust-torso-on" />
+        <span class="cust-zone-label">Torso</span>
+        <input type="color" id="cust-torso" value="#00cc44" disabled />
+      </div>
+      <div class="cust-zone" data-zone="arms">
+        <input type="checkbox" id="cust-arms-on" />
+        <span class="cust-zone-label">Arms</span>
+        <input type="color" id="cust-arms" value="#00cc44" disabled />
+      </div>
+      <div class="cust-zone" data-zone="legs">
+        <input type="checkbox" id="cust-legs-on" />
+        <span class="cust-zone-label">Legs</span>
+        <input type="color" id="cust-legs" value="#00cc44" disabled />
+      </div>
+      <div class="cust-msg" id="cust-msg"></div>
+      <div class="cust-btns">
+        <button class="cust-btn save" id="cust-save">SAVE</button>
+        <button class="cust-btn" id="cust-reset">RESET</button>
+        <button class="cust-btn close" id="cust-close">CLOSE</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm";
+import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/SkeletonUtils.js/+esm";
+import { getMyCustomization, saveCustomization } from "./src/supabase.js";
+
+const modal = document.getElementById("customize-modal");
+const canvas = document.getElementById("cust-canvas");
+const btnCustomize = document.getElementById("btn-customize");
+const btnSave = document.getElementById("cust-save");
+const btnReset = document.getElementById("cust-reset");
+const btnClose = document.getElementById("cust-close");
+const custMsg = document.getElementById("cust-msg");
+
+const baseInput = document.getElementById("cust-base");
+const zones = ["head", "torso", "arms", "legs"];
+const zoneChecks = {};
+const zoneInputs = {};
+zones.forEach(z => {
+  zoneChecks[z] = document.getElementById(`cust-${z}-on`);
+  zoneInputs[z] = document.getElementById(`cust-${z}`);
+  zoneChecks[z].addEventListener("change", () => {
+    zoneInputs[z].disabled = !zoneChecks[z].checked;
+    updatePreview();
+  });
+  zoneInputs[z].addEventListener("input", updatePreview);
+});
+baseInput.addEventListener("input", updatePreview);
+
+// Joint zone mapping (matches main.js)
+const JOINT_ZONE = [];
+for (let i = 0; i <= 58; i++) {
+  if (i <= 2) JOINT_ZONE[i] = "torso";
+  else if (i <= 4) JOINT_ZONE[i] = "head";
+  else if (i <= 50) JOINT_ZONE[i] = "arms";
+  else JOINT_ZONE[i] = "legs";
+}
+
+// 3D preview setup
+let renderer, scene, camera, previewModel, animating = false;
+
+function initPreview() {
+  if (renderer) return;
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0a0e14);
+
+  camera = new THREE.PerspectiveCamera(35, 1, 0.1, 50);
+  camera.position.set(0, 1.0, 5.5);
+  camera.lookAt(0, 0.8, 0);
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x333344, 0.8));
+  const dir = new THREE.DirectionalLight(0xffffff, 1);
+  dir.position.set(2, 3, 2);
+  scene.add(dir);
+
+  // Floor grid
+  const grid = new THREE.GridHelper(4, 8, 0x1a2a3a, 0x0d1520);
+  scene.add(grid);
+}
+
+let humanGLTF = null;
+async function loadModel() {
+  if (humanGLTF) return;
+  const loader = new GLTFLoader();
+  humanGLTF = await new Promise((resolve, reject) => {
+    loader.load("./assets/HumanBase.glb", resolve, undefined, reject);
+  });
+}
+
+function getColors() {
+  const base = baseInput.value;
+  const colors = { base };
+  zones.forEach(z => {
+    colors[z] = zoneChecks[z].checked ? zoneInputs[z].value : null;
+  });
+  return colors;
+}
+
+function applyZoneColorsPreview(model, customColors) {
+  const base = new THREE.Color(customColors.base);
+  const zoneColors = {
+    head:  new THREE.Color(customColors.head || customColors.base),
+    torso: new THREE.Color(customColors.torso || customColors.base),
+    arms:  new THREE.Color(customColors.arms || customColors.base),
+    legs:  new THREE.Color(customColors.legs || customColors.base),
+  };
+
+  model.traverse((obj) => {
+    if (!obj.isMesh || !obj.geometry) return;
+    const geo = obj.geometry;
+    const joints = geo.getAttribute("skinIndex");
+    if (!joints) {
+      obj.material = new THREE.MeshStandardMaterial({ color: base, roughness: 0.6 });
+      return;
+    }
+    const count = geo.getAttribute("position").count;
+    const colors = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const jointIdx = joints.getX(i);
+      const zone = JOINT_ZONE[jointIdx] || "torso";
+      const c = zoneColors[zone];
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+    }
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    obj.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
+  });
+}
+
+function updatePreview() {
+  if (!previewModel) return;
+  const colors = getColors();
+  applyZoneColorsPreview(previewModel, colors);
+}
+
+function spawnPreviewModel() {
+  if (previewModel) { scene.remove(previewModel); previewModel = null; }
+  const maleRig = humanGLTF.scene.getObjectByName("basemesh_male_rig");
+  previewModel = SkeletonUtils.clone(maleRig);
+  previewModel.scale.setScalar(1.35);
+  previewModel.rotation.y = 0; // face camera
+  scene.add(previewModel);
+  updatePreview();
+}
+
+function startAnimation() {
+  if (animating) return;
+  animating = true;
+  const clock = new THREE.Clock();
+  function animate() {
+    if (!animating) return;
+    requestAnimationFrame(animate);
+    const dt = clock.getDelta();
+    // Static front view — no rotation
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const w = rect.width || 300;
+    const h = rect.height || 400;
+    if (canvas.width !== w * devicePixelRatio || canvas.height !== h * devicePixelRatio) {
+      renderer.setSize(w, h);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+    renderer.render(scene, camera);
+  }
+  animate();
+}
+
+function stopAnimation() { animating = false; }
+
+// Load saved customization into the UI
+function loadIntoUI(data) {
+  if (!data) return;
+  if (data.base_color) baseInput.value = data.base_color;
+  zones.forEach(z => {
+    const key = z + "_color";
+    if (data[key]) {
+      zoneChecks[z].checked = true;
+      zoneInputs[z].disabled = false;
+      zoneInputs[z].value = data[key];
+    } else {
+      zoneChecks[z].checked = false;
+      zoneInputs[z].disabled = true;
+      zoneInputs[z].value = baseInput.value;
+    }
+  });
+}
+
+// Open modal
+btnCustomize.addEventListener("click", async () => {
+  modal.classList.add("open");
+  initPreview();
+  await loadModel();
+  spawnPreviewModel();
+  startAnimation();
+
+  // Load saved data
+  custMsg.textContent = "";
+  const saved = await getMyCustomization();
+  if (saved) loadIntoUI(saved);
+  updatePreview();
+});
+
+// Close
+btnClose.addEventListener("click", () => {
+  modal.classList.remove("open");
+  stopAnimation();
+});
+modal.addEventListener("click", (e) => {
+  if (e.target === modal) { modal.classList.remove("open"); stopAnimation(); }
+});
+
+// Save
+btnSave.addEventListener("click", async () => {
+  const colors = getColors();
+  const payload = {
+    base_color: colors.base,
+    head_color: colors.head,
+    torso_color: colors.torso,
+    arms_color: colors.arms,
+    legs_color: colors.legs,
+  };
+  custMsg.textContent = "Saving...";
+  custMsg.style.color = "#aaa";
+  const ok = await saveCustomization(payload);
+  if (ok) {
+    custMsg.style.color = "#00e87a";
+    custMsg.textContent = "Saved!";
+  } else {
+    custMsg.style.color = "#e84000";
+    custMsg.textContent = "Failed to save";
+  }
+});
+
+// Reset
+btnReset.addEventListener("click", () => {
+  baseInput.value = "#00cc44";
+  zones.forEach(z => {
+    zoneChecks[z].checked = false;
+    zoneInputs[z].disabled = true;
+    zoneInputs[z].value = "#00cc44";
+  });
+  updatePreview();
+  custMsg.textContent = "";
+});
 </script>
 
 <!-- Music toggle -->
