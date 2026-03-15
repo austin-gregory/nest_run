@@ -91,6 +91,7 @@ export async function initGame() {
       const falloff = 1 - (dist / 54) * 0.5; // 1.0 at point blank, 0.5 at max range
       en.vel.addScaledVector(_fpToEnemy, 60 * falloff);
       en.vy = 6;
+      en.air = true;
     }
 
     // Spawn sonic wave rings
@@ -199,8 +200,8 @@ export async function initGame() {
     ads: 0.0032,
     dmg: 36,
     range: 280,
-    rp: 0.04,
-    ry: 0.011,
+    rp: 0.028,
+    ry: 0.008,
     can: 0,
   };
 
@@ -755,6 +756,10 @@ export async function initGame() {
     hud();
   }
 
+  // ── Gun sound ──────────────────────────────────────────────────────────
+  const gunSound = new Audio("./assets/smg.wav");
+  gunSound.volume = 0.5;
+
   const rayc = new THREE.Raycaster();
   const shootDir = new THREE.Vector3();
   const fromCam = new THREE.Vector3();
@@ -1039,6 +1044,10 @@ export async function initGame() {
     if (now < weapon.can) return;
 
     weapon.can = now + 1 / weapon.rate;
+
+    // Play gunshot sound (restart if already playing for rapid fire)
+    gunSound.currentTime = 0;
+    gunSound.play().catch(() => {});
 
     const isAiming = input.pointer.aim || input.gamepad.aim;
     const recoilMul = isAiming ? 0.72 : 1;
