@@ -57,3 +57,35 @@ export async function getAvailableRooms() {
   const rooms = await client.getAvailableRooms("game");
   return rooms;
 }
+
+/**
+ * Create a new arena room.
+ * @param {string} [roomName]
+ * @returns {Promise<import("colyseus.js").Room>}
+ */
+export async function createArenaRoom(roomName) {
+  const client = await getClient();
+  const room = await client.create("arena", { roomName });
+  return room;
+}
+
+/**
+ * Join an existing arena room by its ID.
+ * @param {string} roomId
+ * @returns {Promise<import("colyseus.js").Room>}
+ */
+export async function joinArenaRoom(roomId) {
+  const client = await getClient();
+  const room = await client.joinById(roomId, {});
+  return room;
+}
+
+/**
+ * Get list of available arena rooms.
+ * @returns {Promise<Array>}
+ */
+export async function getAvailableArenaRooms() {
+  const client = await getClient();
+  const rooms = await client.getAvailableRooms("arena");
+  return rooms;
+}

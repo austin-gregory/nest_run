@@ -4,6 +4,7 @@ const path = require("path");
 const { Server } = require("colyseus");
 const { WebSocketTransport } = require("@colyseus/ws-transport");
 const { GameRoom } = require("./src/server/GameRoom");
+const { ArenaRoom } = require("./src/server/ArenaRoom");
 const { createClient } = require("@supabase/supabase-js");
 
 const PORT = process.env.PORT || 8000;
@@ -329,6 +330,7 @@ const gameServer = new Server({
 });
 
 gameServer.define("game", GameRoom).enableRealtimeListing();
+gameServer.define("arena", ArenaRoom).enableRealtimeListing();
 // ──────────────────────────────────────────────────────────────────────────
 
 httpServer.listen(PORT, () => {

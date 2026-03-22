@@ -266,10 +266,11 @@
 
   <!-- Role selector -->
   <div class="role-section">
-    <div class="role-label">Select Role</div>
+    <div class="role-label">Select Mode</div>
     <div class="role-btns">
       <button class="role-btn" data-role="fps" id="btn-fps">SHOOTER</button>
       <button class="role-btn" data-role="rts" id="btn-rts">COMMANDER</button>
+      <button class="role-btn" data-role="arena" id="btn-arena">ARENA</button>
     </div>
   </div>
 
@@ -285,7 +286,7 @@
 
   <!-- Room list -->
   <div class="rooms-section">
-    <div class="rooms-header">Available Rooms</div>
+    <div class="rooms-header" id="rooms-header">Available Rooms</div>
     <div id="room-list">
       <div class="rooms-empty">No rooms available. Create one!</div>
     </div>
@@ -659,15 +660,17 @@ function showLoggedOut() {
 
 <!-- Lobby logic -->
 <script type="module">
-import { getAvailableRooms } from "./src/network.js";
+import { getAvailableRooms, getAvailableArenaRooms } from "./src/network.js";
 
 let selectedRole = null;
 
 const btnFps = document.getElementById("btn-fps");
 const btnRts = document.getElementById("btn-rts");
+const btnArena = document.getElementById("btn-arena");
 const btnCreate = document.getElementById("btn-create");
 const roomNameInput = document.getElementById("room-name-input");
 const roomListEl = document.getElementById("room-list");
+const roomsHeader = document.getElementById("rooms-header");
 const errorMsg = document.getElementById("error-msg");
 
 // ── Role selection ──────────────────────────────────────────────────────
@@ -675,21 +678,28 @@ function selectRole(role) {
   selectedRole = role;
   btnFps.classList.toggle("active", role === "fps");
   btnRts.classList.toggle("active", role === "rts");
+  btnArena.classList.toggle("active", role === "arena");
   btnCreate.disabled = false;
-  // Re-render room list to update greyed-out state
+  roomsHeader.textContent = role === "arena" ? "Arena Rooms" : "Available Rooms";
   renderRooms(lastRooms);
 }
 
 btnFps.addEventListener("click", () => selectRole("fps"));
 btnRts.addEventListener("click", () => selectRole("rts"));
+btnArena.addEventListener("click", () => selectRole("arena"));
 
 // ── Create room ─────────────────────────────────────────────────────────
 btnCreate.addEventListener("click", () => {
   if (!selectedRole) return;
-  const roomName = roomNameInput.value.trim() || "Game Room";
-  const page = selectedRole === "fps" ? "shooter_v2.html" : "rts.html";
-  const params = new URLSearchParams({ create: "true", roomName, role: selectedRole });
-  window.location.href = `/${page}?${params}`;
+  const roomName = roomNameInput.value.trim() || (selectedRole === "arena" ? "Arena Room" : "Game Room");
+  if (selectedRole === "arena") {
+    const params = new URLSearchParams({ create: "true", roomName });
+    window.location.href = `/arena.html?${params}`;
+  } else {
+    const page = selectedRole === "fps" ? "shooter_v2.html" : "rts.html";
+    const params = new URLSearchParams({ create: "true", roomName, role: selectedRole });
+    window.location.href = `/${page}?${params}`;
+  }
 });
 
 // ── Room list polling ───────────────────────────────────────────────────
@@ -697,9 +707,14 @@ let lastRooms = [];
 
 function renderRooms(rooms) {
   lastRooms = rooms;
+  const isArenaMode = selectedRole === "arena";
 
-  // Only show waiting rooms
-  const waiting = rooms.filter(r => r.metadata && r.metadata.phase === "waiting");
+  // Filter by type and waiting phase
+  const waiting = rooms.filter(r => {
+    const meta = r.metadata || {};
+    if (meta.phase !== "waiting") return false;
+    return isArenaMode ? !!meta.isArena : !meta.isArena;
+  });
 
   if (waiting.length === 0) {
     roomListEl.innerHTML = '<div class="rooms-empty">No rooms available. Create one!</div>';
@@ -709,35 +724,52 @@ function renderRooms(rooms) {
   roomListEl.innerHTML = "";
   for (const room of waiting) {
     const meta = room.metadata || {};
-    const fpsCount = meta.fpsCount || 0;
-    const fpsFull = fpsCount >= 4;
-    const fpsSlot = fpsFull ? "filled" : "open";
-    const rtsSlot = meta.hasRts ? "filled" : "open";
-    const fpsLabel = fpsCount + "/4";
-    const rtsLabel = meta.hasRts ? "FILLED" : "OPEN";
 
-    // Determine if this room is joinable for the selected role
-    const roleBlocked = selectedRole
-      ? (selectedRole === "fps" && fpsFull) || (selectedRole === "rts" && meta.hasRts)
-      : false;
-    const noRole = !selectedRole;
-    const disabled = roleBlocked || noRole;
+    let disabled = !selectedRole;
+    let itemHtml = "";
+
+    if (isArenaMode) {
+      const fpsCount = meta.fpsCount || 0;
+      const full = fpsCount >= 4;
+      disabled = disabled || full;
+      itemHtml = `
+        <div class="room-name">${escapeHtml(meta.roomName || "Arena Room")}</div>
+        <div class="room-info">
+          <span class="slot ${full ? "filled" : "open"}">FIGHTERS: ${fpsCount}/4</span>
+          <span class="slot open" style="background:rgba(200,0,10,.18);color:#f88">ARENA</span>
+        </div>
+      `;
+    } else {
+      const fpsCount = meta.fpsCount || 0;
+      const fpsFull = fpsCount >= 4;
+      const rtsSlot = meta.hasRts ? "filled" : "open";
+      const roleBlocked = selectedRole
+        ? (selectedRole === "fps" && fpsFull) || (selectedRole === "rts" && meta.hasRts)
+        : false;
+      disabled = disabled || roleBlocked;
+      itemHtml = `
+        <div class="room-name">${escapeHtml(meta.roomName || "Game Room")}</div>
+        <div class="room-info">
+          <span class="slot ${fpsFull ? "filled" : "open"}">SHOOTERS: ${fpsCount}/4</span>
+          <span class="slot ${rtsSlot}">COMMANDER: ${meta.hasRts ? "FILLED" : "OPEN"}</span>
+        </div>
+      `;
+    }
 
     const item = document.createElement("div");
     item.className = "room-item" + (disabled ? " disabled" : "");
-    item.innerHTML = `
-      <div class="room-name">${escapeHtml(meta.roomName || "Game Room")}</div>
-      <div class="room-info">
-        <span class="slot ${fpsSlot}">SHOOTERS: ${fpsLabel}</span>
-        <span class="slot ${rtsSlot}">COMMANDER: ${rtsLabel}</span>
-      </div>
-    `;
+    item.innerHTML = itemHtml;
 
     if (!disabled) {
       item.addEventListener("click", () => {
-        const page = selectedRole === "fps" ? "shooter_v2.html" : "rts.html";
-        const params = new URLSearchParams({ roomId: room.roomId, role: selectedRole });
-        window.location.href = `/${page}?${params}`;
+        if (isArenaMode) {
+          const params = new URLSearchParams({ roomId: room.roomId });
+          window.location.href = `/arena.html?${params}`;
+        } else {
+          const page = selectedRole === "fps" ? "shooter_v2.html" : "rts.html";
+          const params = new URLSearchParams({ roomId: room.roomId, role: selectedRole });
+          window.location.href = `/${page}?${params}`;
+        }
       });
     }
 
@@ -753,8 +785,11 @@ function escapeHtml(s) {
 
 async function pollRooms() {
   try {
-    const rooms = await getAvailableRooms();
-    renderRooms(rooms);
+    const [gameRooms, arenaRooms] = await Promise.all([
+      getAvailableRooms(),
+      getAvailableArenaRooms(),
+    ]);
+    renderRooms([...gameRooms, ...arenaRooms]);
     errorMsg.textContent = "";
   } catch (err) {
     errorMsg.textContent = "Failed to fetch rooms: " + (err.message || err);
@@ -772,7 +807,7 @@ setInterval(pollRooms, 2000);
   const REPEAT = 200;
 
   function getFocusables() {
-    const items = [btnFps, btnRts, roomNameInput, btnCreate];
+    const items = [btnFps, btnRts, btnArena, roomNameInput, btnCreate];
     document.querySelectorAll(".room-item:not(.disabled)").forEach(el => items.push(el));
     return items;
   }
