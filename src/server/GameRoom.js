@@ -301,6 +301,7 @@ class GameRoom extends Room {
       if (data.yaw !== undefined) player.yaw = data.yaw;
       if (data.pitch !== undefined) player.pitch = data.pitch;
       if (data.hp !== undefined) player.hp = data.hp;
+      if (data.ground !== undefined) player.ground = data.ground;
       if (data.cartProgress !== undefined) {
         this.state.cartProgress = Math.max(this.state.cartProgress, data.cartProgress);
       }

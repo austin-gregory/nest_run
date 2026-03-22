@@ -213,117 +213,42 @@ export async function initGame() {
   let trapActive = false;
   const trapTarget = new THREE.Vector3();
   let trapEnd = 0;
-  let trapRopeLine = null; // actually a THREE.Group now
-  const ROPE_SEGMENTS = 24;
-  const _ropeVec = new THREE.Vector3();
+  let trapRopeLine = null;
   const _ropeLook = new THREE.Vector3();
 
-  function createTrapRope(color) {
-    const group = new THREE.Group();
-
-    // ── Cone hook at the player end ──
-    const coneGeo = new THREE.ConeGeometry(0.18, 0.7, 6);
-    coneGeo.rotateX(Math.PI / 2); // point along +Z by default
-    const coneMat = new THREE.MeshStandardMaterial({
-      color, emissive: color, emissiveIntensity: 0.6, roughness: 0.5,
-    });
-    const cone = new THREE.Mesh(coneGeo, coneMat);
-    group.add(cone);
-    group.userData.cone = cone;
-
-    // ── Rope tube (TubeGeometry rebuilt each frame is expensive, use a thick line via cylinder segments) ──
-    // Use a BufferGeometry ribbon with multiple segments for the rope strand
-    const ropePositions = new Float32Array((ROPE_SEGMENTS + 1) * 3);
-    const ropeGeo = new THREE.BufferGeometry();
-    ropeGeo.setAttribute("position", new THREE.Float32BufferAttribute(ropePositions, 3));
-    const ropeMat = new THREE.LineBasicMaterial({ color, linewidth: 2 });
-    const ropeLine = new THREE.Line(ropeGeo, ropeMat);
-    group.add(ropeLine);
-    group.userData.ropeLine = ropeLine;
-
-    // ── Secondary thinner strand for organic feel ──
-    const strand2Pos = new Float32Array((ROPE_SEGMENTS + 1) * 3);
-    const strand2Geo = new THREE.BufferGeometry();
-    strand2Geo.setAttribute("position", new THREE.Float32BufferAttribute(strand2Pos, 3));
-    const strand2Mat = new THREE.LineBasicMaterial({
-      color, linewidth: 1, transparent: true, opacity: 0.5,
-    });
-    const strand2 = new THREE.Line(strand2Geo, strand2Mat);
-    group.add(strand2);
-    group.userData.strand2 = strand2;
-
-    // Store initial distance for retraction animation
-    group.userData.initialDist = 0;
-    group.userData.color = color;
-
-    return group;
+  function createTrapRope() {
+    const model = trapGLTF.scene.clone();
+    model.userData.initialDist = 0;
+    return model;
   }
 
-  function updateTrapRope(group, ax, ay, az, bx, by, bz, time) {
-    const cone = group.userData.cone;
-    const ropeLine = group.userData.ropeLine;
-    const strand2 = group.userData.strand2;
-
-    const dx = ax - bx, dy = ay - by, dz = az - bz;
+  function updateTrapRope(model, ax, ay, az, bx, by, bz) {
+    const dx = bx - ax, dy = by - ay, dz = bz - az;
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-    // Track initial distance for retraction ratio
-    if (group.userData.initialDist === 0 && dist > 1) {
-      group.userData.initialDist = dist;
+    // Position at egg sac end
+    model.position.set(ax, ay, az);
+
+    // Point toward the player
+    _ropeLook.set(bx, by, bz);
+    model.lookAt(_ropeLook);
+
+    // Scale Z (length) to stretch between the two points, keep X/Y at 1
+    if (model.userData.initialDist === 0 && dist > 1) {
+      model.userData.initialDist = dist;
     }
-    const retract = group.userData.initialDist > 0
-      ? Math.max(0, 1 - dist / group.userData.initialDist)
-      : 0;
-
-    // ── Position cone at the player end, pointing toward egg sac ──
-    cone.position.set(bx, by, bz);
-    _ropeLook.set(ax, ay, az);
-    cone.lookAt(_ropeLook);
-
-    // ── Build rope curve from egg sac (a) to player (b) ──
-    // As player gets pulled closer, rope "retracts" — fewer segments visible,
-    // remaining segments bunch up near egg sac
-    const ropePos = ropeLine.geometry.attributes.position;
-    const strand2Pos = strand2.geometry.attributes.position;
-    const sag = Math.min(dist * 0.2, 5) * (1 - retract * 0.7);
-    const waveAmp = 0.08 + (1 - retract) * 0.12; // organic wiggle reduces as rope retracts
-
-    for (let i = 0; i <= ROPE_SEGMENTS; i++) {
-      const t = i / ROPE_SEGMENTS;
-      // Ease the rope — bunch segments toward the egg sac end as it retracts
-      const eased = t;
-      const x = ax + (bx - ax) * eased;
-      const z = az + (bz - az) * eased;
-      // Parabolic droop
-      const droop = -sag * 4 * eased * (1 - eased);
-      // Organic wave along rope
-      const wave = Math.sin(eased * Math.PI * 3 + time * 4) * waveAmp * (1 - eased);
-      const y = ay + (by - ay) * eased + droop;
-
-      // Main rope strand
-      ropePos.setXYZ(i, x, y + wave, z);
-
-      // Secondary strand — offset slightly for organic thickness
-      const off = Math.sin(eased * Math.PI * 2.5 + time * 3 + 1.5) * waveAmp * 0.7 * (1 - eased);
-      // Perpendicular offset (cross the direction with up)
-      const perpX = -dz / (dist || 1) * 0.15;
-      const perpZ = dx / (dist || 1) * 0.15;
-      strand2Pos.setXYZ(i, x + perpX + off * perpX * 3, y + off, z + perpZ + off * perpZ * 3);
-    }
-    ropePos.needsUpdate = true;
-    strand2Pos.needsUpdate = true;
+    model.scale.set(1, 1, dist);
   }
 
   function removeTrapRopeVisual() {
     if (!trapRopeLine) return;
     scene.remove(trapRopeLine);
-    // Dispose geometries
-    trapRopeLine.userData.cone.geometry.dispose();
-    trapRopeLine.userData.cone.material.dispose();
-    trapRopeLine.userData.ropeLine.geometry.dispose();
-    trapRopeLine.userData.ropeLine.material.dispose();
-    trapRopeLine.userData.strand2.geometry.dispose();
-    trapRopeLine.userData.strand2.material.dispose();
+    trapRopeLine.traverse((obj) => {
+      if (obj.isMesh) {
+        obj.geometry.dispose();
+        if (obj.material.dispose) obj.material.dispose();
+      }
+    });
     trapRopeLine = null;
   }
   const activeTrapIndices = new Set(); // tracks which egg sac traps are armed (for shooting)
@@ -822,7 +747,7 @@ export async function initGame() {
   const otherPlayers = new Map(); // sessionId → { group, model, mixer }
   const FPS_COLORS = WORLD.FPS_COLORS;
 
-  // Pre-load human model (gun is now part of HumanBase.glb)
+  // Pre-load human model
   let humanGLTF = null;
   {
     const [{ GLTFLoader }, su] = await Promise.all([
@@ -831,7 +756,15 @@ export async function initGame() {
     ]);
     if (!skeletonClone) skeletonClone = su.clone;
     const loader = new GLTFLoader();
-    humanGLTF = await loader.loadAsync("./assets/HumanBase.glb");
+    humanGLTF = await loader.loadAsync("./assets/new_shooter.glb");
+  }
+
+  // Pre-load trap rope model
+  let trapGLTF = null;
+  {
+    const { GLTFLoader } = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm");
+    const loader = new GLTFLoader();
+    trapGLTF = await loader.loadAsync("./assets/trap.glb");
   }
 
   // Zone mapping: joint index -> body zone (based on HumanBase.glb skeleton)
@@ -846,7 +779,7 @@ export async function initGame() {
     else JOINT_ZONE[i] = "legs";
   }
 
-  function applyZoneColors(model, customColors) {
+  function applyZoneColors(model, customColors, skipMeshNames) {
     const base = new THREE.Color(customColors.base);
     const zoneColors = {
       head:  new THREE.Color(customColors.head || customColors.base),
@@ -857,8 +790,9 @@ export async function initGame() {
 
     model.traverse((obj) => {
       if (!obj.isMesh || !obj.geometry) return;
-      // Skip gun meshes — only color the player body (basemesh_male)
-      if (!obj.name.startsWith("basemesh_male")) return;
+      // Skip gun meshes — keep their original material
+      if (skipMeshNames && skipMeshNames.has(obj.name)) return;
+      // Color all skinned meshes on the player body
       const geo = obj.geometry;
       const joints = geo.getAttribute("skinIndex");
       if (!joints) {
@@ -893,35 +827,45 @@ export async function initGame() {
     model.scale.setScalar(1.35);
     model.rotation.y = Math.PI; // face forward
 
+    // Collect gun mesh names so we can skip them during coloring
+    // Gun meshes are Cube010* (not part of the basemesh_male body)
+    const gunMeshNames = new Set();
+    model.traverse((obj) => {
+      if (obj.isMesh && obj.name && obj.name.startsWith("Cube")) {
+        gunMeshNames.add(obj.name);
+      }
+    });
+
     if (customColors && customColors.base) {
-      applyZoneColors(model, customColors);
+      applyZoneColors(model, customColors, gunMeshNames);
     } else {
       // Default: single color from FPS_COLORS (skip gun meshes)
       const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
       model.traverse((obj) => {
-        if (obj.isMesh && obj.name.startsWith("basemesh_male")) obj.material = mat;
+        if (obj.isMesh && !gunMeshNames.has(obj.name)) obj.material = mat;
       });
     }
 
     group.add(model);
 
-    // Set up animations (gun_hold = idle, gun_hold_walk = walking)
+    // Set up animations: run_forward, run_backwards, dead
     let mixer = null;
-    let actions = { idle: null, walk: null };
+    let actions = { runForward: null, dead: null };
     const clips = humanGLTF.animations;
     if (clips && clips.length > 0) {
       mixer = new THREE.AnimationMixer(model);
-      const idleClip = THREE.AnimationClip.findByName(clips, "gun_hold");
-      const walkClip = THREE.AnimationClip.findByName(clips, "gun_hold_walk");
-      if (idleClip) {
-        actions.idle = mixer.clipAction(idleClip);
-        actions.idle.setLoop(THREE.LoopOnce, 1);
-        actions.idle.clampWhenFinished = true;
-        actions.idle.play();
+      const fwdClip = THREE.AnimationClip.findByName(clips, "run_forward");
+      if (fwdClip) {
+        actions.runForward = mixer.clipAction(fwdClip);
+        actions.runForward.setLoop(THREE.LoopRepeat, Infinity);
+        actions.runForward.timeScale = 0; // start frozen at rest pose (frame 0)
+        actions.runForward.play();
       }
-      if (walkClip) {
-        actions.walk = mixer.clipAction(walkClip);
-        actions.walk.setLoop(THREE.LoopRepeat, Infinity);
+      const deadClip = THREE.AnimationClip.findByName(clips, "dead");
+      if (deadClip) {
+        actions.dead = mixer.clipAction(deadClip);
+        actions.dead.setLoop(THREE.LoopOnce, 1);
+        actions.dead.clampWhenFinished = true;
       }
       mixer.setTime(0);
     }
@@ -953,6 +897,8 @@ export async function initGame() {
       op._tz = p.z;
       op._tyaw = p.yaw;
       op._tpitch = p.pitch;
+      op._ground = p.ground;
+      op._hp = p.hp;
     });
 
     // Remove players no longer in state
@@ -998,16 +944,39 @@ export async function initGame() {
       dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
       g.rotation.y += dyaw * rate;
 
-      // Switch between idle/walk based on movement
+      // Switch between idle/run/dead based on movement and hp
       if (op.mixer && op.actions) {
-        const dx = op._tx - g.position.x;
-        const dz = op._tz - g.position.z;
-        const moving = (dx * dx + dz * dz) > 0.001;
-        const wanted = moving ? "walk" : "idle";
-        if (wanted !== op.curAction && op.actions[wanted]) {
-          if (op.actions[op.curAction]) op.actions[op.curAction].fadeOut(0.2);
-          op.actions[wanted].reset().fadeIn(0.2).play();
+        const dead = op._hp !== undefined && op._hp <= 0;
+        let wanted;
+        if (dead) {
+          wanted = "dead";
+        } else {
+          const dx = op._tx - g.position.x;
+          const dz = op._tz - g.position.z;
+          const moving = (dx * dx + dz * dz) > 0.001;
+          wanted = moving ? "run" : "idle";
+        }
+        if (wanted !== op.curAction) {
+          if (wanted === "dead" && op.actions.dead) {
+            // Crossfade from run into dead
+            if (op.actions.runForward) op.actions.runForward.fadeOut(0.2);
+            op._deathY = g.position.y;
+            op.actions.dead.reset().fadeIn(0.2).play();
+          } else if (op.curAction === "dead" && op.actions.runForward) {
+            // Coming back from dead (respawn)
+            if (op.actions.dead) op.actions.dead.fadeOut(0.2);
+            op._deathY = undefined;
+            op.actions.runForward.reset().fadeIn(0.2).play();
+            op.actions.runForward.timeScale = wanted === "run" ? 1 : 0;
+          } else if (op.actions.runForward) {
+            // idle <-> run: same action, just toggle timeScale
+            op.actions.runForward.timeScale = wanted === "run" ? 1 : 0;
+          }
           op.curAction = wanted;
+        }
+        // Keep model at death height while dead
+        if (dead && op._deathY !== undefined) {
+          g.position.y = op._deathY;
         }
         op.mixer.update(dt);
       }
@@ -1370,9 +1339,9 @@ export async function initGame() {
         });
         // Create rope visual
         removeTrapRopeVisual();
-        trapRopeLine = createTrapRope(0x88ff44);
+        trapRopeLine = createTrapRope();
         const ey = map.gy(egg.x, egg.z) + 2;
-        updateTrapRope(trapRopeLine, egg.x, ey, egg.z, player.pos.x, player.pos.y, player.pos.z, t);
+        updateTrapRope(trapRopeLine, egg.x, ey, egg.z, player.pos.x, player.pos.y, player.pos.z);
         scene.add(trapRopeLine);
       }
     }
@@ -1736,6 +1705,7 @@ export async function initGame() {
       yaw: player.yaw,
       pitch: player.pitch,
       hp: player.hp,
+      ground: player.ground,
       cartProgress: map.cart.p,
     });
 
@@ -2139,7 +2109,7 @@ export async function initGame() {
       // Update rope visual
       if (trapRopeLine) {
         const ey = map.gy(trapTarget.x, trapTarget.z) + 2;
-        updateTrapRope(trapRopeLine, trapTarget.x, ey, trapTarget.z, player.pos.x, player.pos.y, player.pos.z, t);
+        updateTrapRope(trapRopeLine, trapTarget.x, ey, trapTarget.z, player.pos.x, player.pos.y, player.pos.z);
       }
       // Client-side fallback release
       if (t > trapEnd) {
@@ -2462,9 +2432,9 @@ export async function initGame() {
         ui.banner("TRAPPED!", 2);
         // Create rope line visual
         removeTrapRopeVisual();
-        trapRopeLine = createTrapRope(0xffcc00);
+        trapRopeLine = createTrapRope();
         const ey = map.gy(data.eggX, data.eggZ) + 2;
-        updateTrapRope(trapRopeLine, data.eggX, ey, data.eggZ, player.pos.x, player.pos.y, player.pos.z, performance.now() / 1000);
+        updateTrapRope(trapRopeLine, data.eggX, ey, data.eggZ, player.pos.x, player.pos.y, player.pos.z);
         scene.add(trapRopeLine);
       }
     });
