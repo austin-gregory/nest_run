@@ -925,7 +925,7 @@ async function loadModel() {
   if (humanGLTF) return;
   const loader = new GLTFLoader();
   humanGLTF = await new Promise((resolve, reject) => {
-    loader.load("./assets/HumanBase.glb", resolve, undefined, reject);
+    loader.load("./assets/newshooter.glb", resolve, undefined, reject);
   });
 }
 
@@ -976,13 +976,32 @@ function updatePreview() {
   applyZoneColorsPreview(previewModel, colors);
 }
 
+let previewMixer = null;
 function spawnPreviewModel() {
   if (previewModel) { scene.remove(previewModel); previewModel = null; }
-  const maleRig = humanGLTF.scene.getObjectByName("basemesh_male_rig");
-  previewModel = SkeletonUtils.clone(maleRig);
+  if (previewMixer) { previewMixer = null; }
+  previewModel = SkeletonUtils.clone(humanGLTF.scene);
   previewModel.scale.setScalar(1.35);
   previewModel.rotation.y = 0; // face camera
   scene.add(previewModel);
+
+  // Apply T-Pose for the character editor
+  const clips = humanGLTF.animations;
+  if (clips && clips.length > 0) {
+    previewMixer = new THREE.AnimationMixer(previewModel);
+    const tposeClip = THREE.AnimationClip.findByName(clips, "T-Pose")
+      || THREE.AnimationClip.findByName(clips, "TPose")
+      || THREE.AnimationClip.findByName(clips, "T_Pose")
+      || THREE.AnimationClip.findByName(clips, "Tpose");
+    if (tposeClip) {
+      const action = previewMixer.clipAction(tposeClip);
+      action.setLoop(THREE.LoopRepeat, Infinity);
+      action.timeScale = 0; // freeze at first frame
+      action.play();
+      previewMixer.update(0);
+    }
+  }
+
   updatePreview();
 }
 
