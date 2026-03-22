@@ -31,7 +31,7 @@ services:
       - certbot-etc:/etc/letsencrypt
       - certbot-var:/var/lib/letsencrypt
       - certbot-webroot:/var/www/certbot
-    command: certonly --webroot -w /var/www/certbot -d nestrun.darkgamefactory.com --email austin@darkgamefactory.com --agree-tos --no-eff-email --force-renewal
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done'"
 
 volumes:
   certbot-etc:
