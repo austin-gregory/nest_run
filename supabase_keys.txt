@@ -1,5 +1,0 @@
-  export SUPABASE_URL="https://qfvqnhddqodntueqmvfl.supabase.co"
-  export SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmdnFuaGRkcW9kbnR1ZXFtdmZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4ODQ4ODcsImV4cCI6MjA4ODQ2MDg4N30.2hed5yJIUYe3OgnBqH0cqCka9O_HIbAfgcK8HVC62cY"
-
-
-  export SUPABASE_SERVICE_ROLE_KEY="sb_secret_CTh9zHjmTV6wkcL6qAXbfg_2PtIvIhR"
