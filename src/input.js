@@ -1,4 +1,4 @@
-export function attachInput({ element, onReload, onSwapWeapon, onLookDelta, onLockChange, lookSensitivity = 0.0022 }) {
+export function attachInput({ element, onReload, onSwapWeapon, onLookDelta, onLockChange, onMenu, lookSensitivity = 0.0022 }) {
   const keys = new Set();
   const pointer = { locked: false, aim: false, fire: false };
 
@@ -15,6 +15,7 @@ export function attachInput({ element, onReload, onSwapWeapon, onLookDelta, onLo
     keys.add(e.code);
     if (e.code === "KeyR") onReload?.();
     if (e.code === "KeyQ") onSwapWeapon?.();
+    if (e.code === "Escape") onMenu?.();
   });
 
   addEventListener("keyup", (e) => {
@@ -63,6 +64,7 @@ export function attachInput({ element, onReload, onSwapWeapon, onLookDelta, onLo
     _prevReload: false,
     _prevJump: false,
     _prevSwap: false,
+    _prevStart: false,
   };
 
   function applyDeadzone(value, deadzone) {
@@ -118,9 +120,10 @@ export function attachInput({ element, onReload, onSwapWeapon, onLookDelta, onLo
     gamepad.fire = rt ? (rt.value > TRIGGER_DEADZONE || rt.pressed) : false;
     gamepad.aim = lt ? (lt.value > TRIGGER_DEADZONE || lt.pressed) : false;
 
-    // A = jump (button 0) — edge-triggered
+    // A = jump (button 0) — edge-triggered + continuous hold
     const aPressed = gp.buttons[0] ? gp.buttons[0].pressed : false;
     gamepad.jump = aPressed && !gamepad._prevJump;
+    gamepad.jumpHeld = aPressed;
     gamepad._prevJump = aPressed;
 
     // Left stick press (L3) = sprint (button 10) — toggle-style hold
@@ -136,6 +139,11 @@ export function attachInput({ element, onReload, onSwapWeapon, onLookDelta, onLo
     gamepad.swap = yPressed && !gamepad._prevSwap;
     if (gamepad.swap) onSwapWeapon?.();
     gamepad._prevSwap = yPressed;
+
+    // Start = menu (button 9) — edge-triggered
+    const startPressed = gp.buttons[9] ? gp.buttons[9].pressed : false;
+    if (startPressed && !gamepad._prevStart) onMenu?.();
+    gamepad._prevStart = startPressed;
   }
 
   return { keys, pointer, gamepad, pollGamepad };

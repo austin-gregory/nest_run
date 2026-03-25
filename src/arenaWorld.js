@@ -67,10 +67,53 @@ export function createArenaWorld(scene) {
     world.add(ring);
   }
 
-  // gy: on the platform returns 0, off the platform returns very low (player falls)
-  function gy(x, z) {
-    if (Math.abs(x) < PLAT_W / 2 && Math.abs(z) < PLAT_D / 2) return 0;
-    return -9999;
+  // ── Floating platforms ──────────────────────────────────────────────────
+  const floatPlatMat = new THREE.MeshStandardMaterial({ color: 0x4a6a8a, roughness: 0.7, metalness: 0.2 });
+  const floatEdgeMat = new THREE.MeshStandardMaterial({ color: 0x00b4ff, emissive: 0x003366, roughness: 0.5 });
+  const FLOAT_PLATS = [
+    { x:  14, y: 10, z:  14, w: 7, d: 7 },
+    { x: -14, y: 10, z: -14, w: 7, d: 7 },
+    { x:  0,  y: 16, z:  0,  w: 6, d: 6 },
+    { x: -14, y: 12, z:  14, w: 5, d: 5 },
+    { x:  14, y: 12, z: -14, w: 5, d: 5 },
+  ];
+  const FLOAT_H = 0.6;
+
+  for (const fp of FLOAT_PLATS) {
+    const geo = new THREE.BoxGeometry(fp.w, FLOAT_H, fp.d);
+    const mesh = new THREE.Mesh(geo, floatPlatMat);
+    mesh.position.set(fp.x, fp.y - FLOAT_H / 2, fp.z);
+    world.add(mesh);
+
+    // Glowing edge trim
+    const trimH = 0.08;
+    const trimT = 0.12;
+    const edges = [
+      { pos: [fp.x, fp.y - trimH / 2, fp.z + fp.d / 2 + trimT / 2], sx: fp.w, sy: trimH, sz: trimT },
+      { pos: [fp.x, fp.y - trimH / 2, fp.z - fp.d / 2 - trimT / 2], sx: fp.w, sy: trimH, sz: trimT },
+      { pos: [fp.x + fp.w / 2 + trimT / 2, fp.y - trimH / 2, fp.z], sx: trimT, sy: trimH, sz: fp.d },
+      { pos: [fp.x - fp.w / 2 - trimT / 2, fp.y - trimH / 2, fp.z], sx: trimT, sy: trimH, sz: fp.d },
+    ];
+    for (const e of edges) {
+      const em = new THREE.Mesh(new THREE.BoxGeometry(e.sx, e.sy, e.sz), floatEdgeMat);
+      em.position.set(...e.pos);
+      world.add(em);
+    }
+  }
+
+  // gy: check floating platforms (highest below player wins), then main platform
+  // playerY is optional — if provided, only return platforms the player is above
+  function gy(x, z, playerY) {
+    let best = -9999;
+    // Main platform
+    if (Math.abs(x) < PLAT_W / 2 && Math.abs(z) < PLAT_D / 2) best = 0;
+    // Floating platforms — only land if player feet are at or above platform top
+    for (const fp of FLOAT_PLATS) {
+      if (Math.abs(x - fp.x) < fp.w / 2 && Math.abs(z - fp.z) < fp.d / 2) {
+        if (fp.y > best && (playerY === undefined || playerY >= fp.y)) best = fp.y;
+      }
+    }
+    return best;
   }
 
   return {

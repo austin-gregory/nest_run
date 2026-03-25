@@ -34,6 +34,43 @@ export async function initArena() {
   const forceGunView = await createWeaponView(scene, FORCE_GUN_ASSETS);
   forceGunView.gun.visible = false;
 
+  // ── Local player jetpack flame (visible from below) — two thrusters ──
+  const localFlame = new THREE.Group();
+  localFlame.visible = false;
+  scene.add(localFlame);
+  const LOCAL_SPREAD = 0.18;
+  const localFlameCoreL = new THREE.Mesh(
+    new THREE.ConeGeometry(0.12, 0.8, 8),
+    new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.9 })
+  );
+  localFlameCoreL.rotation.x = Math.PI;
+  localFlameCoreL.position.set(-LOCAL_SPREAD, -0.4, 0);
+  localFlame.add(localFlameCoreL);
+  const localFlameCoreR = new THREE.Mesh(
+    new THREE.ConeGeometry(0.12, 0.8, 8),
+    new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.9 })
+  );
+  localFlameCoreR.rotation.x = Math.PI;
+  localFlameCoreR.position.set(LOCAL_SPREAD, -0.4, 0);
+  localFlame.add(localFlameCoreR);
+  const localFlameOuterL = new THREE.Mesh(
+    new THREE.ConeGeometry(0.2, 1.1, 8),
+    new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.45 })
+  );
+  localFlameOuterL.rotation.x = Math.PI;
+  localFlameOuterL.position.set(-LOCAL_SPREAD, -0.5, 0);
+  localFlame.add(localFlameOuterL);
+  const localFlameOuterR = new THREE.Mesh(
+    new THREE.ConeGeometry(0.2, 1.1, 8),
+    new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.45 })
+  );
+  localFlameOuterR.rotation.x = Math.PI;
+  localFlameOuterR.position.set(LOCAL_SPREAD, -0.5, 0);
+  localFlame.add(localFlameOuterR);
+  const localFlameLight = new THREE.PointLight(0xff6600, 2, 6);
+  localFlameLight.position.y = -0.3;
+  localFlame.add(localFlameLight);
+
   // ── Force gun checkpoint (center of platform) ─────────────────────────
   let activeWeapon = "smg";
   let checkpointReached = false;
@@ -44,6 +81,20 @@ export async function initArena() {
   checkpointRing.rotation.x = -Math.PI / 2;
   checkpointRing.position.set(0, 0.08, 0);
   map.world.add(checkpointRing);
+
+  // Floating force gun display model above checkpoint
+  let floatingGun = null;
+  {
+    const { GLTFLoader } = await import(
+      "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm"
+    );
+    const loader = new GLTFLoader();
+    const gltf = await loader.loadAsync(FORCE_GUN_ASSETS.gunModelUrl);
+    floatingGun = gltf.scene;
+    floatingGun.scale.setScalar(1.5);
+    floatingGun.position.set(0, 1.2, 0);
+    map.world.add(floatingGun);
+  }
 
   function swapWeapon() {
     if (!checkpointReached || game.resp || !game.started) return;
@@ -104,16 +155,16 @@ export async function initArena() {
     for (const [sid, op] of otherPlayers) {
       _fpToPlayer.set(op._tx - player.pos.x, 0, op._tz - player.pos.z);
       const dist = _fpToPlayer.length();
-      if (dist > 54 || dist < 0.1) continue;
+      if (dist > 15 || dist < 0.1) continue;
       _fpToPlayer.normalize();
       if (_fpDir.dot(_fpToPlayer) < 0) continue;
-      const falloff = 1 - (dist / 54) * 0.5;
+      const falloff = 1 - (dist / 15) * 0.5;
       if (room) {
         room.send("pvpPush", {
           targetSid: sid,
-          vx: _fpToPlayer.x * 60 * falloff,
-          vy: 6,
-          vz: _fpToPlayer.z * 60 * falloff,
+          vx: _fpToPlayer.x * 30 * falloff,
+          vy: 4,
+          vz: _fpToPlayer.z * 30 * falloff,
         });
       }
     }
@@ -158,6 +209,13 @@ export async function initArena() {
     aa: 12,
     fg: 10,
     fa: 0.35,
+    // Jetpack
+    jetFuel: 150,
+    jetFuelMax: 150,
+    jetRechargeRate: 30,   // fuel per second when not boosting
+    jetDrainRate: 40,      // fuel per second while boosting
+    jetThrust: 32,         // upward acceleration while boosting (must exceed gravity of 22)
+    jetMaxVelY: 8,         // max upward speed from jetpack
   };
 
   let smoothCamY = player.pos.y;
@@ -174,16 +232,44 @@ export async function initArena() {
   };
 
   // ── Input ───────────────────────────────────────────────────────────────
+  // ── Quit / pause menu ────────────────────────────────────────────────
+  const quitOverlay = document.getElementById("quit-overlay");
+  const resumeBtn = document.getElementById("resume-btn");
+  const quitBtn = document.getElementById("quit-btn");
+  const menuBtnEl = document.getElementById("menu-btn");
+  let menuOpen = false;
+  let quitMenuGpNav = null;
+
+  function toggleMenu() {
+    if (game.win) return;
+    menuOpen = !menuOpen;
+    if (menuOpen) {
+      document.exitPointerLock();
+      quitOverlay.classList.add("open");
+      quitMenuGpNav = gamepadMenuNav([resumeBtn, quitBtn]);
+    } else {
+      quitOverlay.classList.remove("open");
+      if (quitMenuGpNav) { quitMenuGpNav.stop(); quitMenuGpNav = null; }
+      renderer.domElement.requestPointerLock();
+    }
+  }
+
+  if (resumeBtn) resumeBtn.onclick = () => toggleMenu();
+  if (quitBtn) quitBtn.onclick = () => { window.location.href = "/"; };
+  if (menuBtnEl) menuBtnEl.onclick = () => toggleMenu();
+
   const input = attachInput({
     element: renderer.domElement,
     onSwapWeapon: () => swapWeapon(),
     onLookDelta: (dx, dy) => {
+      if (menuOpen) return;
       player.yaw += dx;
       player.pitch = clamp(player.pitch + dy, -1.45, 1.45);
     },
     onLockChange: (locked) => {
-      ui.msg(locked ? "" : "Click game to lock mouse.");
+      if (!menuOpen) ui.msg(locked ? "" : "Click game to lock mouse.");
     },
+    onMenu: () => toggleMenu(),
   });
 
   // ── HUD ─────────────────────────────────────────────────────────────────
@@ -196,6 +282,8 @@ export async function initArena() {
       deaths: game.deaths,
       progress: 0,
       elapsed: game.elapsed,
+      jetFuel: player.jetFuel,
+      jetFuelMax: player.jetFuelMax,
     });
   }
 
@@ -243,8 +331,11 @@ export async function initArena() {
   let lastDt = 0.016;
 
   function collidePlayer() {
-    const rawY = map.gy(player.pos.x, player.pos.z);
-    smoothGroundY += (rawY - smoothGroundY) * Math.min(1, 25 * lastDt);
+    const feetY = player.pos.y - player.height + 0.5; // tolerance so fast falls don't clip through
+    const rawY = map.gy(player.pos.x, player.pos.z, feetY);
+    // Snap up instantly (landing on platform), smooth down (walking off edge)
+    if (rawY > smoothGroundY) smoothGroundY = rawY;
+    else smoothGroundY += (rawY - smoothGroundY) * Math.min(1, 25 * lastDt);
     const y = smoothGroundY;
     if (player.pos.y < y + player.height) {
       player.pos.y = y + player.height;
@@ -527,7 +618,7 @@ export async function initArena() {
     ]);
     skeletonClone = su.clone;
     const loader = new GLTFLoader();
-    humanGLTF = await loader.loadAsync("./assets/HumanBase.glb");
+    humanGLTF = await loader.loadAsync("./assets/new_shooter.glb");
   }
 
   const JOINT_ZONE = [];
@@ -581,21 +672,22 @@ export async function initArena() {
     group.add(model);
 
     let mixer = null;
-    let actions = { idle: null, walk: null };
+    let actions = { runForward: null, dead: null };
     const clips = humanGLTF.animations;
     if (clips && clips.length > 0) {
       mixer = new THREE.AnimationMixer(model);
-      const idleClip = THREE.AnimationClip.findByName(clips, "gun_hold");
-      const walkClip = THREE.AnimationClip.findByName(clips, "gun_hold_walk");
-      if (idleClip) {
-        actions.idle = mixer.clipAction(idleClip);
-        actions.idle.setLoop(THREE.LoopOnce, 1);
-        actions.idle.clampWhenFinished = true;
-        actions.idle.play();
+      const fwdClip = THREE.AnimationClip.findByName(clips, "run_forward");
+      if (fwdClip) {
+        actions.runForward = mixer.clipAction(fwdClip);
+        actions.runForward.setLoop(THREE.LoopRepeat, Infinity);
+        actions.runForward.timeScale = 0; // start frozen at rest pose (frame 0)
+        actions.runForward.play();
       }
-      if (walkClip) {
-        actions.walk = mixer.clipAction(walkClip);
-        actions.walk.setLoop(THREE.LoopRepeat, Infinity);
+      const deadClip = THREE.AnimationClip.findByName(clips, "dead");
+      if (deadClip) {
+        actions.dead = mixer.clipAction(deadClip);
+        actions.dead.setLoop(THREE.LoopOnce, 1);
+        actions.dead.clampWhenFinished = true;
       }
       mixer.setTime(0);
     }
@@ -608,7 +700,51 @@ export async function initArena() {
     hitBox.position.set(0, 0.875, 0);
     group.add(hitBox);
 
-    return { group, model, mixer, actions, curAction: "idle", hitBox };
+    // Jetpack flame effect — two thrusters side by side
+    const flameGroup = new THREE.Group();
+    flameGroup.position.set(0, 0.6, 0.3);
+    flameGroup.visible = false;
+    group.add(flameGroup);
+
+    const THRUSTER_SPREAD = 0.18; // half-distance between thrusters
+
+    const flameCoreL = new THREE.Mesh(
+      new THREE.ConeGeometry(0.12, 0.8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.9 })
+    );
+    flameCoreL.rotation.x = Math.PI;
+    flameCoreL.position.set(-THRUSTER_SPREAD, -0.4, 0);
+    flameGroup.add(flameCoreL);
+
+    const flameCoreR = new THREE.Mesh(
+      new THREE.ConeGeometry(0.12, 0.8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.9 })
+    );
+    flameCoreR.rotation.x = Math.PI;
+    flameCoreR.position.set(THRUSTER_SPREAD, -0.4, 0);
+    flameGroup.add(flameCoreR);
+
+    const flameOuterL = new THREE.Mesh(
+      new THREE.ConeGeometry(0.2, 1.1, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.45 })
+    );
+    flameOuterL.rotation.x = Math.PI;
+    flameOuterL.position.set(-THRUSTER_SPREAD, -0.5, 0);
+    flameGroup.add(flameOuterL);
+
+    const flameOuterR = new THREE.Mesh(
+      new THREE.ConeGeometry(0.2, 1.1, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.45 })
+    );
+    flameOuterR.rotation.x = Math.PI;
+    flameOuterR.position.set(THRUSTER_SPREAD, -0.5, 0);
+    flameGroup.add(flameOuterR);
+
+    const flameGlow = new THREE.PointLight(0xff6600, 2, 6);
+    flameGlow.position.y = -0.3;
+    flameGroup.add(flameGlow);
+
+    return { group, model, mixer, actions, curAction: "idle", hitBox, flameGroup, flameCoreL, flameCoreR, flameOuterL, flameOuterR };
   }
 
   const _otherCustomizations = new Map();
@@ -632,6 +768,8 @@ export async function initArena() {
       }
       op._tx = p.x; op._ty = p.y; op._tz = p.z;
       op._tyaw = p.yaw; op._tpitch = p.pitch;
+      op._jetting = p.jetting || false;
+      op._hp = p.hp;
     });
 
     for (const [sid, op] of otherPlayers) {
@@ -655,16 +793,47 @@ export async function initArena() {
       g.rotation.y += dyaw * rate;
 
       if (op.mixer && op.actions) {
-        const dx = op._tx - g.position.x;
-        const dz = op._tz - g.position.z;
-        const moving = dx * dx + dz * dz > 0.001;
-        const wanted = moving ? "walk" : "idle";
-        if (wanted !== op.curAction && op.actions[wanted]) {
-          if (op.actions[op.curAction]) op.actions[op.curAction].fadeOut(0.2);
-          op.actions[wanted].reset().fadeIn(0.2).play();
+        const dead = op._hp !== undefined && op._hp <= 0;
+        let wanted;
+        if (dead) {
+          wanted = "dead";
+        } else {
+          const dx = op._tx - g.position.x;
+          const dz = op._tz - g.position.z;
+          const moving = (dx * dx + dz * dz) > 0.001;
+          wanted = moving ? "run" : "idle";
+        }
+        if (wanted !== op.curAction) {
+          if (wanted === "dead" && op.actions.dead) {
+            if (op.actions.runForward) op.actions.runForward.fadeOut(0.2);
+            op._deathY = g.position.y;
+            op.actions.dead.reset().fadeIn(0.2).play();
+          } else if (op.curAction === "dead" && op.actions.runForward) {
+            if (op.actions.dead) op.actions.dead.fadeOut(0.2);
+            op._deathY = undefined;
+            op.actions.runForward.reset().fadeIn(0.2).play();
+            op.actions.runForward.timeScale = wanted === "run" ? 1 : 0;
+          } else if (op.actions.runForward) {
+            op.actions.runForward.timeScale = wanted === "run" ? 1 : 0;
+          }
           op.curAction = wanted;
         }
+        if (dead && op._deathY !== undefined) {
+          g.position.y = op._deathY;
+        }
         op.mixer.update(dt);
+      }
+      // Jetpack flame animation
+      if (op.flameGroup) {
+        op.flameGroup.visible = !!op._jetting;
+        if (op._jetting) {
+          const fL = 0.85 + Math.random() * 0.3;
+          const fR = 0.85 + Math.random() * 0.3;
+          op.flameCoreL.scale.set(fL, 0.7 + Math.random() * 0.5, fL);
+          op.flameCoreR.scale.set(fR, 0.7 + Math.random() * 0.5, fR);
+          op.flameOuterL.scale.set(fL, 0.7 + Math.random() * 0.4, fL);
+          op.flameOuterR.scale.set(fR, 0.7 + Math.random() * 0.4, fR);
+        }
       }
     }
   }
@@ -683,6 +852,7 @@ export async function initArena() {
     room.send("playerUpdate", {
       x: player.pos.x, y: player.pos.y, z: player.pos.z,
       yaw: player.yaw, pitch: player.pitch, hp: player.hp,
+      jetting: player._jetting || false,
     });
   }
 
@@ -706,6 +876,7 @@ export async function initArena() {
   function respawnPlayer() {
     game.resp = false;
     player.hp = 200;
+    player.jetFuel = player.jetFuelMax;
     player.vel.set(0, 0, 0);
     const sp = ARENA_SPAWN_POINTS[myColorIndex] || ARENA_SPAWN_POINTS[0];
     player.pos.set(sp.x, player.height, sp.z);
@@ -803,6 +974,8 @@ export async function initArena() {
     input.pollGamepad(dt);
     const gp = input.gamepad;
 
+    if (!menuOpen) {
+
     wish(wishMove);
     const sprint = input.keys.has("ShiftLeft") || input.keys.has("ShiftRight") || gp.sprint;
     const speed = player.ground ? (sprint ? player.ss : player.ws) : player.as;
@@ -815,10 +988,26 @@ export async function initArena() {
         friction(player.fa, dt);
         accel(wishMove, speed, player.aa, dt);
       }
-      player.vel.y -= player.g * dt;
-      if (player.ground && (input.keys.has("Space") || gp.jump)) {
-        player.vel.y = player.j;
-        player.ground = false;
+      // Jetpack boost
+      const jetInput = input.keys.has("Space") || gp.jumpHeld;
+      if (jetInput && player.jetFuel > 0) {
+        if (player.ground) {
+          player.vel.y = 4;  // initial kick off ground
+          player.ground = false;
+        }
+        player.vel.y -= player.g * 0.55 * dt; // reduced gravity while thrusting
+        player.vel.y += player.jetThrust * dt;
+        if (player.vel.y > player.jetMaxVelY) player.vel.y = player.jetMaxVelY;
+        player.jetFuel = Math.max(0, player.jetFuel - player.jetDrainRate * dt);
+        player._jetting = true;
+      } else {
+        // Soft gravity when airborne with fuel left — lets you feather thrust to hover
+        const gScale = (!player.ground && player.jetFuel > 0) ? 0.6 : 1;
+        player.vel.y -= player.g * gScale * dt;
+        player._jetting = false;
+        if (!jetInput) {
+          player.jetFuel = Math.min(player.jetFuelMax, player.jetFuel + player.jetRechargeRate * dt);
+        }
       }
     } else {
       friction(9, dt);
@@ -835,11 +1024,16 @@ export async function initArena() {
 
     // Checkpoint pickup
     if (!checkpointReached && game.started && !game.resp) {
+      if (floatingGun) {
+        floatingGun.rotation.y += dt * 1.5;
+        floatingGun.position.y = 1.2 + Math.sin(t * 2) * 0.3;
+      }
       const cdx = player.pos.x - 0;
       const cdz = player.pos.z - 0;
       if (Math.hypot(cdx, cdz) < 6) {
         checkpointReached = true;
         map.world.remove(checkpointRing);
+        if (floatingGun) { map.world.remove(floatingGun); floatingGun = null; }
         ui.banner("FORCE GUN ACQUIRED \u2014 Press Q / Y to switch", 3);
       }
     }
@@ -856,6 +1050,18 @@ export async function initArena() {
     const camYTarget = player.pos.y + by;
     smoothCamY += (camYTarget - smoothCamY) * Math.min(1, 20 * dt);
     camera.position.set(player.pos.x + bx, smoothCamY, player.pos.z);
+
+    // Local jetpack flame
+    localFlame.visible = !!player._jetting;
+    if (player._jetting) {
+      localFlame.position.set(player.pos.x, player.pos.y - player.height, player.pos.z);
+      const fL = 0.85 + Math.random() * 0.3;
+      const fR = 0.85 + Math.random() * 0.3;
+      localFlameCoreL.scale.set(fL, 0.7 + Math.random() * 0.5, fL);
+      localFlameCoreR.scale.set(fR, 0.7 + Math.random() * 0.5, fR);
+      localFlameOuterL.scale.set(fL, 0.7 + Math.random() * 0.4, fL);
+      localFlameOuterR.scale.set(fR, 0.7 + Math.random() * 0.4, fR);
+    }
 
     veil.style.opacity = game.resp ? (game.respT / 3) * 0.55 : 0;
 
@@ -942,6 +1148,8 @@ export async function initArena() {
         if (g.vel.y < 0) { g.vel.y *= -0.25; g.vel.x *= 0.55; g.vel.z *= 0.55; }
       }
     }
+
+    } // end if (!menuOpen)
 
     hud();
     renderer.render(scene, camera);

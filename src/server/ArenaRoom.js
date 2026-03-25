@@ -21,6 +21,7 @@ class ArenaRoom extends Room {
       if (data.yaw != null) p.yaw = data.yaw;
       if (data.pitch != null) p.pitch = data.pitch;
       if (data.hp != null) p.hp = data.hp;
+      if (data.jetting != null) p.jetting = data.jetting;
     });
 
     // PvP damage: relay damage to target player

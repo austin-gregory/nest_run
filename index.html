@@ -220,19 +220,34 @@
     }
     #music-toggle:hover{background:rgba(0,180,255,.15);border-color:rgba(0,180,255,.3);color:#fff}
     #music-toggle.muted{color:#555}
+
+    /* ── Gamepad indicator ────────────────────────────────── */
+    #gamepad-indicator{
+      position:fixed;bottom:16px;right:16px;z-index:10;
+      height:42px;border-radius:21px;padding:0 14px;
+      background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.15);
+      font-size:13px;color:#555;cursor:default;
+      display:flex;align-items:center;gap:8px;
+      font-family:'Courier New',Courier,monospace;letter-spacing:.05em;
+      transition:all .3s;
+    }
+    #gamepad-indicator .gp-icon{font-size:20px}
+    #gamepad-indicator.connected{color:#00e87a;border-color:rgba(0,232,122,.4);box-shadow:0 0 10px rgba(0,232,122,.2)}
   </style>
 </head>
 <body>
 <canvas id="bg-canvas"></canvas>
 <div id="lobby">
   <h1>NEST RUN</h1>
-  <div class="subtitle">Choose your role and enter the battlefield</div>
-
+  <div class="subtitle">Choose a game mode and enter the battle</div>
   <!-- Auth / Account -->
   <div class="auth-section" id="auth-section">
     <!-- Login form (shown when logged out) -->
     <div id="auth-form">
       <div class="auth-label">Account</div>
+      <div style="font-size:10px;color:#445;letter-spacing:.1em;margin-bottom:6px;text-align:center">
+        Login to track scores &amp; customize your character
+      </div>
       <div class="auth-row" id="auth-name-row" style="display:none">
         <input class="auth-input" id="auth-name" type="text" placeholder="Display name" maxlength="20" />
       </div>
@@ -266,11 +281,14 @@
 
   <!-- Role selector -->
   <div class="role-section">
-    <div class="role-label">Select Mode</div>
+    <div class="role-label">Co-op vs AI — 4v1 PvP</div>
     <div class="role-btns">
       <button class="role-btn" data-role="fps" id="btn-fps">SHOOTER</button>
       <button class="role-btn" data-role="rts" id="btn-rts">COMMANDER</button>
-      <button class="role-btn" data-role="arena" id="btn-arena">ARENA</button>
+    </div>
+    <div class="role-label" style="margin-top:16px">Free-For-All</div>
+    <div class="role-btns">
+      <button class="role-btn" data-role="arena" id="btn-arena">JETPACK ARENA</button>
     </div>
   </div>
 
@@ -1144,6 +1162,7 @@ btnReset.addEventListener("click", () => {
 <!-- Music toggle -->
 <audio id="menu-music" src="./assets/music/menu.wav" loop preload="auto"></audio>
 <button id="music-toggle" title="Toggle music">&#128264;</button>
+<div id="gamepad-indicator" title="No gamepad detected"><span class="gp-icon">&#127918;</span><span id="gp-status">Not Connected</span></div>
 <script>
 (function() {
   const audio = document.getElementById("menu-music");
@@ -1177,6 +1196,46 @@ btnReset.addEventListener("click", () => {
   }
   document.addEventListener("click", autoplay);
   document.addEventListener("keydown", autoplay);
+})();
+</script>
+
+<!-- Gamepad detection -->
+<script>
+(function() {
+  const ind = document.getElementById("gamepad-indicator");
+  const gpStatus = document.getElementById("gp-status");
+  let knownConnected = false;
+
+  function checkGamepads() {
+    if (!navigator.getGamepads) return false;
+    const gamepads = navigator.getGamepads();
+    for (let i = 0; i < gamepads.length; i++) {
+      if (gamepads[i] && gamepads[i].connected) return true;
+    }
+    return false;
+  }
+
+  function setStatus(connected) {
+    knownConnected = connected;
+    ind.classList.toggle("connected", connected);
+    ind.title = connected ? "Gamepad connected" : "No gamepad detected";
+    gpStatus.textContent = connected ? "Connected" : "Not Connected";
+  }
+
+  // These events are the most reliable way to detect gamepads
+  window.addEventListener("gamepadconnected", () => setStatus(true));
+  window.addEventListener("gamepaddisconnected", () => {
+    // Re-check in case multiple controllers
+    setStatus(checkGamepads());
+  });
+
+  // Also poll — some browsers don't fire events reliably
+  // and getGamepads() only works after a button press in some browsers
+  function poll() {
+    setStatus(checkGamepads());
+    requestAnimationFrame(poll);
+  }
+  requestAnimationFrame(poll);
 })();
 </script>
 </body>

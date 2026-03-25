@@ -47,6 +47,20 @@ export async function initGame() {
   checkpointRing.position.set(checkpointPos.x, checkpointY + 0.08, checkpointPos.z);
   scene.add(checkpointRing);
 
+  // Floating force gun display model above checkpoint
+  let floatingGun = null;
+  {
+    const { GLTFLoader } = await import(
+      "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm"
+    );
+    const loader = new GLTFLoader();
+    const gltf = await loader.loadAsync(FORCE_GUN_ASSETS.gunModelUrl);
+    floatingGun = gltf.scene;
+    floatingGun.scale.setScalar(1.5);
+    floatingGun.position.set(checkpointPos.x, checkpointY + 1.2, checkpointPos.z);
+    scene.add(floatingGun);
+  }
+
   function swapWeapon() {
     if (!checkpointReached || game.resp || game.win || !game.started) return;
     if (activeWeapon === "smg") {
@@ -253,16 +267,44 @@ export async function initGame() {
   }
   const activeTrapIndices = new Set(); // tracks which egg sac traps are armed (for shooting)
 
+  // ── Quit / pause menu ────────────────────────────────────────────────
+  const quitOverlay = document.getElementById("quit-overlay");
+  const resumeBtn = document.getElementById("resume-btn");
+  const quitBtn = document.getElementById("quit-btn");
+  const menuBtn = document.getElementById("menu-btn");
+  let menuOpen = false;
+  let quitMenuGpNav = null;
+
+  function toggleMenu() {
+    if (game.win) return; // don't show menu on game-over screens
+    menuOpen = !menuOpen;
+    if (menuOpen) {
+      document.exitPointerLock();
+      quitOverlay.classList.add("open");
+      quitMenuGpNav = gamepadMenuNav([resumeBtn, quitBtn]);
+    } else {
+      quitOverlay.classList.remove("open");
+      if (quitMenuGpNav) { quitMenuGpNav.stop(); quitMenuGpNav = null; }
+      renderer.domElement.requestPointerLock();
+    }
+  }
+
+  if (resumeBtn) resumeBtn.onclick = () => toggleMenu();
+  if (quitBtn) quitBtn.onclick = () => { window.location.href = "/"; };
+  if (menuBtn) menuBtn.onclick = () => toggleMenu();
+
   const input = attachInput({
     element: renderer.domElement,
     onSwapWeapon: () => swapWeapon(),
     onLookDelta: (dx, dy) => {
+      if (menuOpen) return;
       player.yaw += dx;
       player.pitch = clamp(player.pitch + dy, -1.45, 1.45);
     },
     onLockChange: (locked) => {
-      ui.msg(locked ? "" : "Click game to lock mouse.");
+      if (!menuOpen) ui.msg(locked ? "" : "Click game to lock mouse.");
     },
+    onMenu: () => toggleMenu(),
   });
 
   function hud() {
@@ -2055,9 +2097,12 @@ export async function initGame() {
     camera.rotation.x = player.pitch;
     camera.rotation.z = game.deathRoll;
 
-    // Poll gamepad state
+    // Poll gamepad state (always poll so Start button works to close menu)
     input.pollGamepad(dt);
     const gp = input.gamepad;
+
+    // Skip game logic while quit menu is open (still render)
+    if (!menuOpen) {
 
     wish(wishMove);
     const sprint = input.keys.has("ShiftLeft") || input.keys.has("ShiftRight") || gp.sprint;
@@ -2135,11 +2180,16 @@ export async function initGame() {
 
     // Checkpoint pickup detection
     if (!checkpointReached) {
+      if (floatingGun) {
+        floatingGun.rotation.y += dt * 1.5;
+        floatingGun.position.y = checkpointY + 1.2 + Math.sin(t * 2) * 0.3;
+      }
       const cdx = player.pos.x - checkpointRing.position.x;
       const cdz = player.pos.z - checkpointRing.position.z;
       if (Math.hypot(cdx, cdz) < 6) {
         checkpointReached = true;
         scene.remove(checkpointRing);
+        if (floatingGun) { scene.remove(floatingGun); floatingGun = null; }
         ui.banner("FORCE GUN ACQUIRED \u2014 Press Q / Y to switch", 3);
       }
     }
@@ -2186,9 +2236,13 @@ export async function initGame() {
     weaponView.gun.position.add((aiming ? adsOffset : hipOffset).clone().applyQuaternion(camera.quaternion));
     weaponView.settle(dt);
     const forceHipOffset = hipOffset.clone();
-    forceHipOffset.y -= 0.35;
+    forceHipOffset.x -= 0.15;
+    forceHipOffset.y -= 0.75;
+    forceHipOffset.z += 0.15;
     const forceAdsOffset = adsOffset.clone();
-    forceAdsOffset.y -= 0.35;
+    forceAdsOffset.x -= 0.15;
+    forceAdsOffset.y -= 0.75;
+    forceAdsOffset.z += 0.15;
     forceGunView.gun.position.copy(camera.position);
     forceGunView.gun.quaternion.copy(camera.quaternion);
     forceGunView.gun.position.add((aiming ? forceAdsOffset : forceHipOffset).applyQuaternion(camera.quaternion));
@@ -2264,6 +2318,8 @@ export async function initGame() {
         if (g.vel.y < 0) { g.vel.y *= -0.25; g.vel.x *= 0.55; g.vel.z *= 0.55; }
       }
     }
+
+    } // end if (!menuOpen)
 
     renderer.render(scene, camera);
   }

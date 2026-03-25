@@ -12,6 +12,7 @@ class Player extends Schema {
     this.hp = 200;
     this.colorIndex = 0;
     this.ground = true;
+    this.jetting = false;
   }
 }
 type("string")(Player.prototype, "role");
@@ -23,6 +24,7 @@ type("float32")(Player.prototype, "pitch");
 type("float32")(Player.prototype, "hp");
 type("int8")(Player.prototype, "colorIndex");
 type("boolean")(Player.prototype, "ground");
+type("boolean")(Player.prototype, "jetting");
 
 class Enemy extends Schema {
   constructor() {

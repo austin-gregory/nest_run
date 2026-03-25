@@ -15,6 +15,8 @@ export function createUI() {
     bn: $("bn"),
     x: $("x"),
     optic: $("optic"),
+    jet: $("jet"),
+    jetb: $("jetb"),
   };
 
   function msg(text) {
@@ -44,11 +46,18 @@ export function createUI() {
     if (refs.optic) refs.optic.style.opacity = isAim ? "1" : "0";
   }
 
-  function hud({ hp, maxHp, enemies, kills, deaths, progress, elapsed }) {
+  function hud({ hp, maxHp, enemies, kills, deaths, progress, elapsed, jetFuel, jetFuelMax }) {
     const pct = Math.max(0, hp) / maxHp;
     refs.hp.textContent = Math.max(0, Math.floor(hp));
     refs.hpb.style.width = (pct * 100).toFixed(1) + "%";
     refs.hpb.className = "bf " + (pct > 0.6 ? "hp-hi" : pct > 0.3 ? "hp-mid" : "hp-low");
+
+    if (refs.jet && refs.jetb && jetFuel !== undefined) {
+      const jpct = Math.max(0, jetFuel) / (jetFuelMax || 100);
+      refs.jet.textContent = Math.max(0, Math.floor(jetFuel));
+      refs.jetb.style.width = (jpct * 100).toFixed(1) + "%";
+      refs.jetb.className = "bf " + (jpct > 0.5 ? "jet-hi" : jpct > 0.2 ? "jet-mid" : "jet-low");
+    }
 
     refs.en.textContent = enemies;
     refs.kl.textContent = kills;

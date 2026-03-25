@@ -10,6 +10,15 @@
     #a,#m{position:absolute;background:rgba(0,0,0,.38);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:8px 10px}
     #a{left:12px;top:10px;font-size:14px}
     #m{right:12px;top:10px;font-size:13px;max-width:360px}
+    #menu-btn{position:absolute;right:12px;top:56px;width:40px;height:40px;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.15);border-radius:8px;cursor:pointer;pointer-events:auto;display:flex;align-items:center;justify-content:center;transition:background .15s;z-index:50}
+    #menu-btn:hover{background:rgba(0,180,255,.2);border-color:rgba(0,180,255,.4)}
+    #menu-btn svg{width:22px;height:22px;fill:#fff}
+    #quit-overlay{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.82);z-index:998;gap:16px;font-family:monospace;pointer-events:auto}
+    #quit-overlay.open{display:flex}
+    #quit-overlay h2{color:#fff;font-size:36px;letter-spacing:4px;margin:0}
+    .quit-btn{padding:16px 52px;font-size:22px;font-family:monospace;border:none;border-radius:6px;cursor:pointer;letter-spacing:3px;transition:background .15s}
+    .quit-btn.resume{background:#0a7a3a;color:#fff}.quit-btn.resume:hover{background:#06a04d}
+    .quit-btn.quit{background:#c0000a;color:#fff}.quit-btn.quit:hover{background:#8a0008}
     #x{position:absolute;left:50%;top:50%;width:20px;height:20px;transform:translate(-50%,-50%)}
     #x:before,#x:after{content:"";position:absolute;left:50%;top:50%;background:#fff;transform:translate(-50%,-50%)}
     #x:before{width:2px;height:20px}#x:after{width:20px;height:2px}
@@ -66,6 +75,8 @@
     <div id="optic-bg"></div><div id="optic-ring"></div><div id="optic-post-l"></div><div id="optic-post-r"></div><div id="optic-dot"></div>
   </div>
   <div id="veil"></div>
+  <div id="menu-btn" title="Menu (Esc)"><svg viewBox="0 0 24 24"><rect y="3" width="24" height="3" rx="1"/><rect y="10.5" width="24" height="3" rx="1"/><rect y="18" width="24" height="3" rx="1"/></svg></div>
+  <div id="quit-overlay"><h2>PAUSED</h2><button class="quit-btn resume" id="resume-btn">RESUME</button><button class="quit-btn quit" id="quit-btn">QUIT TO MENU</button></div>
 
   <div id="b">
     <div class="hs">

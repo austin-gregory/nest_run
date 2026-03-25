@@ -43,14 +43,14 @@ export const ASSETS = {
 };
 
 export const FORCE_GUN_ASSETS = {
-  gunModelUrl: "./assets/gun.glb",
+  gunModelUrl: "./assets/force_gun.glb",
   gunTextureUrl: null,
   gunMuzzleNodeName: null,
   gunSlideNodeName: null,
   gunEjectNodeName: null,
   gunSlideTravel: 0.04,
-  gunScale: 0.14,
-  gunRotation: { x: 0, y: Math.PI, z: 0 },
+  gunScale: 0.50,
+  gunRotation: { x: 0, y: Math.PI + Math.PI / 2, z: 0 },
 };
 
 export const RTS = {
