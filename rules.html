@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Nest Run — Game Guide</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html{width:100%;background:#05070a;color:#ccd;font-family:'Courier New',Courier,monospace;overflow-y:auto;scroll-behavior:smooth}
+    body{max-width:860px;margin:0 auto;padding:40px 24px 80px}
+
+    h1{font-size:42px;letter-spacing:8px;color:#00b4ff;text-shadow:0 0 30px rgba(0,180,255,.3);text-align:center;margin-bottom:4px}
+    .subtitle{text-align:center;font-size:13px;color:#556;letter-spacing:.2em;text-transform:uppercase;margin-bottom:40px}
+
+    h2{font-size:22px;color:#00b4ff;letter-spacing:3px;text-transform:uppercase;margin:48px 0 16px;padding-bottom:8px;border-bottom:1px solid rgba(0,180,255,.15)}
+    h3{font-size:16px;color:#ff8844;letter-spacing:1px;margin:28px 0 10px}
+    h4{font-size:13px;color:#aab;letter-spacing:1px;text-transform:uppercase;margin:18px 0 6px}
+
+    p,li{font-size:14px;line-height:1.7;color:#99a}
+    p{margin-bottom:12px}
+    ul,ol{margin:0 0 16px 20px}
+    li{margin-bottom:4px}
+    strong{color:#dde}
+
+    .card{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:20px 24px;margin:16px 0}
+    .card h3{margin-top:0}
+
+    .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 32px;margin:10px 0 16px}
+    .stat{display:flex;justify-content:space-between;border-bottom:1px dotted rgba(255,255,255,.06);padding:3px 0}
+    .stat-label{color:#778;font-size:13px}
+    .stat-val{color:#dde;font-size:13px;text-align:right}
+
+    .highlight{color:#00b4ff}
+    .warn{color:#ff4444}
+    .gold{color:#ffcc00}
+    .green{color:#44cc66}
+
+    .toc{background:rgba(0,180,255,.04);border:1px solid rgba(0,180,255,.1);border-radius:8px;padding:20px 28px;margin:0 0 32px}
+    .toc-title{font-size:12px;color:#00b4ff;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px}
+    .toc a{color:#668;font-size:13px;text-decoration:none;display:block;padding:3px 0;transition:color .15s}
+    .toc a:hover{color:#00b4ff}
+
+    .role-tag{display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-right:6px}
+    .role-fps{background:rgba(0,200,68,.15);color:#00cc44;border:1px solid rgba(0,200,68,.2)}
+    .role-rts{background:rgba(255,136,0,.15);color:#ff8800;border:1px solid rgba(255,136,0,.2)}
+    .role-both{background:rgba(0,180,255,.15);color:#00b4ff;border:1px solid rgba(0,180,255,.2)}
+
+    .controls-table{width:100%;border-collapse:collapse;margin:10px 0 16px}
+    .controls-table th{text-align:left;font-size:11px;color:#556;letter-spacing:1px;text-transform:uppercase;padding:6px 12px;border-bottom:1px solid rgba(255,255,255,.08)}
+    .controls-table td{font-size:13px;padding:6px 12px;border-bottom:1px solid rgba(255,255,255,.03);color:#99a}
+    .controls-table td:first-child{color:#dde;white-space:nowrap}
+
+    .screenshot-placeholder{background:rgba(255,255,255,.02);border:2px dashed rgba(255,255,255,.08);border-radius:8px;height:200px;display:flex;align-items:center;justify-content:center;color:#334;font-size:12px;letter-spacing:2px;text-transform:uppercase;margin:16px 0}
+
+    .back-link{display:inline-block;margin-bottom:24px;color:#446;font-size:13px;text-decoration:none;letter-spacing:1px}
+    .back-link:hover{color:#00b4ff}
+
+    @media(max-width:600px){
+      body{padding:24px 16px 60px}
+      h1{font-size:28px;letter-spacing:4px}
+      .stat-grid{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+
+<a href="/" class="back-link">&larr; Back to Lobby</a>
+
+<h1>NEST RUN</h1>
+<p class="subtitle">Game Guide &amp; Rules</p>
+
+<div class="toc">
+  <div class="toc-title">Contents</div>
+  <a href="#overview">Overview</a>
+  <a href="#modes">Game Modes</a>
+  <a href="#shooter">Shooter Guide</a>
+  <a href="#commander">Commander Guide</a>
+  <a href="#enemies">Enemies</a>
+  <a href="#abilities">Commander Abilities</a>
+  <a href="#controls">Controls</a>
+  <a href="#tips">Tips &amp; Strategy</a>
+</div>
+
+<!-- ─── OVERVIEW ──────────────────────────────────────── -->
+<h2 id="overview">Overview</h2>
+
+<p><strong>Nest Run</strong> is an asymmetric multiplayer game where <span class="role-tag role-fps">Shooters</span> escort a rail cart along a winding track to an alien nest, while a <span class="role-tag role-rts">Commander</span> spawns alien bugs and deploys traps to stop them.</p>
+
+<div class="card">
+  <h3><span class="green">Shooter Win Condition</span></h3>
+  <p>Push the cart all the way to the nest before time runs out.</p>
+
+  <h3><span class="warn">Commander Win Condition</span></h3>
+  <p>Run out the 10-minute clock before the cart reaches the nest.</p>
+</div>
+
+<img src="./screenshots/map.png" alt="Overview of the Nest Run map" style="width:100%;border-radius:8px;margin:16px 0;border:1px solid rgba(255,255,255,.06)">
+
+<!-- ─── GAME MODES ────────────────────────────────────── -->
+<h2 id="modes">Game Modes</h2>
+
+<div class="card">
+  <h3>PvP &mdash; Shooters vs Commander</h3>
+  <p>1&ndash;4 Shooters face off against 1 Commander. The Commander spawns bugs, places walls, and activates traps using biomass. A <strong>10-minute timer</strong> counts down &mdash; if the cart hasn't reached the nest when time expires, the Commander wins.</p>
+  <div class="stat-grid">
+    <div class="stat"><span class="stat-label">Players</span><span class="stat-val">1&ndash;4 Shooters + 1 Commander</span></div>
+    <div class="stat"><span class="stat-label">Time Limit</span><span class="stat-val">10:00</span></div>
+    <div class="stat"><span class="stat-label">Starting Biomass</span><span class="stat-val">100 &times; shooter count</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Co-op</h3>
+  <p>2&ndash;4 Shooters work together with no human Commander. An AI Commander spawns walls on the track and activates egg sac traps as the cart progresses. Enemy bugs spawn automatically with scaling difficulty.</p>
+</div>
+
+<div class="card">
+  <h3>Solo</h3>
+  <p>Single player mode. Same as Co-op but you're on your own. Bug difficulty scales with deaths and cart progress.</p>
+</div>
+
+<!-- ─── SHOOTER GUIDE ─────────────────────────────────── -->
+<h2 id="shooter">Shooter Guide</h2>
+
+<h3>The Cart</h3>
+<p>Stay close to the cart to push it forward along the track. If you die or move away, the cart slows down. Walls placed on the track block the cart &mdash; destroy them to keep moving.</p>
+
+<img src="./screenshots/cart_push.gif" alt="Escorting the cart along the track" style="width:100%;border-radius:8px;margin:16px 0;border:1px solid rgba(255,255,255,.06)">
+
+<h3>Weapons</h3>
+
+<div class="card">
+  <h4>SMG <span style="color:#556">&mdash; Primary</span></h4>
+  <p>Full-auto rifle with a laser sight. Your bread and butter for clearing bugs.</p>
+  <div class="stat-grid">
+    <div class="stat"><span class="stat-label">Damage</span><span class="stat-val">36 per shot</span></div>
+    <div class="stat"><span class="stat-label">Headshot</span><span class="stat-val">56 (1.55&times;)</span></div>
+    <div class="stat"><span class="stat-label">Fire Rate</span><span class="stat-val">11.2 rounds/sec</span></div>
+    <div class="stat"><span class="stat-label">Range</span><span class="stat-val">280 units</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <h4>Force Gun <span style="color:#556">&mdash; Secondary (unlocked at 25% progress)</span></h4>
+  <p>A short-range push cannon that knocks enemies back. Unlocked at the <span class="highlight">checkpoint</span> marker on the track. Press <strong>Q</strong> or <strong>Y</strong> to swap weapons.</p>
+  <div class="stat-grid">
+    <div class="stat"><span class="stat-label">Push Force</span><span class="stat-val">60 units/sec</span></div>
+    <div class="stat"><span class="stat-label">Fire Rate</span><span class="stat-val">1.5 shots/sec</span></div>
+    <div class="stat"><span class="stat-label">Range</span><span class="stat-val">54 units</span></div>
+  </div>
+</div>
+
+<h3>Health &amp; Respawning</h3>
+<p>You have <strong>200 HP</strong>. When killed, you respawn at the start after a <strong>3-second</strong> delay. Each death makes enemy bugs slightly stronger and faster, so try to stay alive.</p>
+
+<h3>Spawn Safe Zone</h3>
+<p>The area around the spawn point is a safe zone &mdash; enemies can't damage you there. Use it to regroup after a death.</p>
+
+<h3>Traps</h3>
+<p>Egg sacs near the track can be activated as traps. When you walk into an active trap's radius, you'll be <span class="gold">yanked toward the egg sac</span> and held for <strong>5 seconds</strong>, taking <strong>100 damage</strong> total. Your weapons are disabled while trapped.</p>
+<p>You can <strong>shoot egg sacs</strong> to destroy them before they catch you (200 HP, about 6 SMG shots). In co-op, teammates can also shoot the egg sac to free you.</p>
+
+<img src="./screenshots/trap.gif" alt="Egg sac trap pulling a player" style="width:100%;border-radius:8px;margin:16px 0;border:1px solid rgba(255,255,255,.06)">
+
+<!-- ─── COMMANDER GUIDE ───────────────────────────────── -->
+<h2 id="commander">Commander Guide</h2>
+
+<p>As Commander, you have a top-down view of the entire map. You spend <span class="highlight">biomass</span> to spawn bugs, place walls, and activate traps to prevent the cart from reaching the nest.</p>
+
+<h3>Biomass</h3>
+<p>Your resource for everything. It regenerates over time and scales with the number of shooters for fairness.</p>
+<div class="stat-grid">
+  <div class="stat"><span class="stat-label">Starting</span><span class="stat-val">100 &times; shooter count</span></div>
+  <div class="stat"><span class="stat-label">Max</span><span class="stat-val">200 &times; shooter count</span></div>
+  <div class="stat"><span class="stat-label">Regen</span><span class="stat-val">8/sec &times; shooter count</span></div>
+  <div class="stat"><span class="stat-label">Checkpoint Bonus</span><span class="stat-val">+100 &times; shooter count at 25%</span></div>
+</div>
+
+<h3>Spawning Bugs</h3>
+<p><strong>Left-click</strong> anywhere on the map to spawn an active bug that immediately chases the nearest player. <strong>Right-click</strong> to spawn a <span class="gold">dormant bug</span> that stands still until a shooter gets within 15 units or you click to wake it manually. Great for ambushes.</p>
+
+<img src="./screenshots/commander_spawning.gif" alt="Commander spawning bugs on the map" style="width:100%;border-radius:8px;margin:16px 0;border:1px solid rgba(255,255,255,.06)">
+
+<h3>Map Markers</h3>
+<ul>
+  <li><strong style="color:#00cc44">Green/Blue/Yellow/Orange dots</strong> &mdash; Shooter players (with direction indicators)</li>
+  <li><strong style="color:#ff2200">Red dots</strong> &mdash; Active enemy bugs</li>
+  <li><strong style="color:#ddaa00">Yellow rings + "DORMANT" label</strong> &mdash; Dormant bugs with wake radius</li>
+  <li><strong style="color:#b08a7a">Brown rectangles</strong> &mdash; Nest walls on the track</li>
+  <li><strong style="color:#00b4ff">Blue ring</strong> &mdash; Force gun checkpoint (25% progress)</li>
+</ul>
+
+<!-- ─── ENEMIES ───────────────────────────────────────── -->
+<h2 id="enemies">Enemies</h2>
+
+<div class="card">
+  <h3>Basic Bug</h3>
+  <p>Standard alien that chases the nearest player. Can jump when close. Cheap and plentiful.</p>
+  <div class="stat-grid">
+    <div class="stat"><span class="stat-label">Cost</span><span class="stat-val highlight">20 biomass</span></div>
+    <div class="stat"><span class="stat-label">HP</span><span class="stat-val">70</span></div>
+    <div class="stat"><span class="stat-label">Speed</span><span class="stat-val">6 units/sec</span></div>
+    <div class="stat"><span class="stat-label">Cooldown</span><span class="stat-val">0.5 sec</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Acid Bug</h3>
+  <p>Faster but more fragile. When killed, releases an <span class="green">acid cloud</span> that blinds nearby shooters for 6 seconds.</p>
+  <div class="stat-grid">
+    <div class="stat"><span class="stat-label">Cost</span><span class="stat-val highlight">60 biomass</span></div>
+    <div class="stat"><span class="stat-label">HP</span><span class="stat-val">50</span></div>
+    <div class="stat"><span class="stat-label">Speed</span><span class="stat-val">7 units/sec</span></div>
+    <div class="stat"><span class="stat-label">Blind Radius</span><span class="stat-val">10 units</span></div>
+    <div class="stat"><span class="stat-label">Blind Duration</span><span class="stat-val">6 seconds</span></div>
+    <div class="stat"><span class="stat-label">Cooldown</span><span class="stat-val">15 sec</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Dormant Bug</h3>
+  <p>Any bug type spawned with right-click. Stands still playing idle animation until a shooter enters its <strong>15-unit wake radius</strong> or the Commander clicks to wake it. Same stats as the base type once active.</p>
+</div>
+
+<!-- ─── ABILITIES ─────────────────────────────────────── -->
+<h2 id="abilities">Commander Abilities</h2>
+
+<div class="card">
+  <h3>Nest Wall <span style="color:#556">&mdash; Key 3</span></h3>
+  <p>Place an organic wall across the track to block the cart. Shooters must destroy it to continue. Click on the track to place.</p>
+  <div class="stat-grid">
+    <div class="stat"><span class="stat-label">Cost</span><span class="stat-val highlight">80 biomass</span></div>
+    <div class="stat"><span class="stat-label">HP</span><span class="stat-val">1,200</span></div>
+    <div class="stat"><span class="stat-label">Cooldown</span><span class="stat-val">25 sec</span></div>
+    <div class="stat"><span class="stat-label">Size</span><span class="stat-val">10w &times; 4h &times; 2d</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Egg Sac Trap <span style="color:#556">&mdash; Click egg sac</span></h3>
+  <p>Click an egg sac on the map to arm it as a trap. When a shooter walks within range, they're yanked toward it and held for 5 seconds while taking damage. <span class="warn">Limited to 3 activations per match.</span></p>
+  <div class="stat-grid">
+    <div class="stat"><span class="stat-label">Cost</span><span class="stat-val highlight">40 biomass</span></div>
+    <div class="stat"><span class="stat-label">Max Per Match</span><span class="stat-val warn">3</span></div>
+    <div class="stat"><span class="stat-label">Catch Radius</span><span class="stat-val">40 units</span></div>
+    <div class="stat"><span class="stat-label">Hold Duration</span><span class="stat-val">5 sec</span></div>
+    <div class="stat"><span class="stat-label">Damage</span><span class="stat-val">100 total</span></div>
+    <div class="stat"><span class="stat-label">Trap HP</span><span class="stat-val">200 (shootable)</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Speed Boost <span style="color:#556">&mdash; Key 4</span></h3>
+  <p>All bugs move at <strong>2&times; speed</strong> for 20 seconds. Use it when you have a swarm in position.</p>
+  <div class="stat-grid">
+    <div class="stat"><span class="stat-label">Cost</span><span class="stat-val">Free</span></div>
+    <div class="stat"><span class="stat-label">Uses</span><span class="stat-val warn">2 per match</span></div>
+    <div class="stat"><span class="stat-label">Duration</span><span class="stat-val">20 sec</span></div>
+  </div>
+</div>
+
+<!-- ─── CONTROLS ──────────────────────────────────────── -->
+<h2 id="controls">Controls</h2>
+
+<h3><span class="role-tag role-fps">Shooter</span> Keyboard &amp; Mouse</h3>
+<table class="controls-table">
+  <tr><th>Action</th><th>Key</th></tr>
+  <tr><td>Move</td><td>W / A / S / D</td></tr>
+  <tr><td>Sprint</td><td>Shift</td></tr>
+  <tr><td>Jump</td><td>Space</td></tr>
+  <tr><td>Shoot</td><td>Left Mouse Button</td></tr>
+  <tr><td>Aim Down Sights</td><td>Right Mouse Button</td></tr>
+  <tr><td>Swap Weapon</td><td>Q</td></tr>
+</table>
+
+<h3><span class="role-tag role-fps">Shooter</span> Gamepad</h3>
+<table class="controls-table">
+  <tr><th>Action</th><th>Button</th></tr>
+  <tr><td>Move</td><td>Left Stick</td></tr>
+  <tr><td>Look</td><td>Right Stick</td></tr>
+  <tr><td>Shoot / Aim</td><td>Right Trigger</td></tr>
+  <tr><td>Jump</td><td>A</td></tr>
+  <tr><td>Sprint</td><td>Right Bumper</td></tr>
+  <tr><td>Swap Weapon</td><td>Y</td></tr>
+</table>
+
+<h3><span class="role-tag role-rts">Commander</span></h3>
+<table class="controls-table">
+  <tr><th>Action</th><th>Key</th></tr>
+  <tr><td>Pan Camera</td><td>W / A / S / D or Arrow Keys</td></tr>
+  <tr><td>Zoom In / Out</td><td>Mouse Wheel or Arrow Up / Down</td></tr>
+  <tr><td>Spawn Bug (active)</td><td>Left Click</td></tr>
+  <tr><td>Spawn Bug (dormant)</td><td>Right Click</td></tr>
+  <tr><td>Select Basic Bug</td><td>1</td></tr>
+  <tr><td>Select Acid Bug</td><td>2</td></tr>
+  <tr><td>Select Wall</td><td>3</td></tr>
+  <tr><td>Speed Boost</td><td>4</td></tr>
+  <tr><td>Wake Dormant Bug</td><td>Left Click on dormant marker</td></tr>
+  <tr><td>Arm Trap</td><td>Left Click on egg sac</td></tr>
+</table>
+
+<!-- ─── TIPS ──────────────────────────────────────────── -->
+<h2 id="tips">Tips &amp; Strategy</h2>
+
+<h3><span class="role-tag role-fps">Shooter Tips</span></h3>
+<ul>
+  <li>Stay near the cart &mdash; it only moves when you're close.</li>
+  <li>Prioritize acid bugs. They're fragile but the blind effect is devastating.</li>
+  <li>Watch for dormant bugs &mdash; they'll ambush you if you walk past without looking.</li>
+  <li>Shoot egg sacs before they catch you. Listen for the activation and look for glowing sacs ahead.</li>
+  <li>Use the Force Gun to knock groups of bugs off the track &mdash; it buys time even if it doesn't kill.</li>
+  <li>In co-op, one player can push while others clear the path ahead.</li>
+  <li>Each death makes bugs stronger. Play cautiously early and save aggression for when you have the Force Gun.</li>
+</ul>
+
+<h3><span class="role-tag role-rts">Commander Tips</span></h3>
+<ul>
+  <li>Don't spend all your biomass at once &mdash; it regenerates, so maintain steady pressure.</li>
+  <li>Place walls just ahead of the cart to force shooters to stop and fight.</li>
+  <li>Dormant bugs are great for ambushes at chokepoints. Place them around corners.</li>
+  <li>Use acid bugs near walls &mdash; the blind effect on death makes it harder to shoot the wall down.</li>
+  <li>Save your 3 trap activations for the later half of the track when it matters most.</li>
+  <li>Time your speed boosts when you have a large swarm near the shooters.</li>
+  <li>The checkpoint at 25% gives you a biomass bonus too &mdash; spend it on a wall + bug combo.</li>
+</ul>
+
+<div style="margin-top:60px;text-align:center;color:#334;font-size:11px;letter-spacing:2px;text-transform:uppercase">
+  Nest Run &copy; 2026
+</div>
+
+</body>
+</html>

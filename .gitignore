@@ -1,3 +1,7 @@
 node_modules/
 supabase_keys.txt
 .env
+.mcp.json
+.vscode/
+*.Zone.Identifier
+*:Zone.Identifier
