@@ -72,6 +72,9 @@ const MIME = {
   ".svg": "image/svg+xml",
   ".glb": "model/gltf-binary",
   ".gltf": "model/gltf+json",
+  ".wav": "audio/wav",
+  ".mp3": "audio/mpeg",
+  ".ogg": "audio/ogg",
 };
 
 function safeJoin(root, requestedPath) {
