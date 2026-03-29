@@ -186,8 +186,7 @@ export async function createWorld(scene) {
     eggSacPositions.push({ x: ex, z: ez, rotY: rand() * Math.PI * 2 });
   }
   {
-    const { GLTFLoader } = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm");
-    const gltfLoader = new GLTFLoader();
+    const { gltfLoader } = await import("./gltfLoader.js");
     const gltf = await gltfLoader.loadAsync("./assets/Egg-sac.glb");
     // Extract geometries from loaded scene, replace materials with tinted ones
     const eggSacMats = {
@@ -345,9 +344,8 @@ export async function createWorld(scene) {
 
   // Load bomb model and place on top of cart
   {
-    const { GLTFLoader: BombLoader } = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm");
-    const bombLoader = new BombLoader();
-    const bombGltf = await bombLoader.loadAsync("./assets/bomb.glb");
+    const { gltfLoader } = await import("./gltfLoader.js");
+    const bombGltf = await gltfLoader.loadAsync("./assets/bomb.glb");
     const bomb = bombGltf.scene;
     bomb.position.set(0, 2.2, 0);
     bomb.rotation.y = Math.PI;

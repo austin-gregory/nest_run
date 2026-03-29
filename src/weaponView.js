@@ -28,11 +28,8 @@ export async function createWeaponView(scene, config) {
 
   if (config.gunModelUrl) {
     try {
-      const { GLTFLoader } = await import(
-        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm"
-      );
-      const loader = new GLTFLoader();
-      const gltf = await loader.loadAsync(config.gunModelUrl);
+      const { gltfLoader } = await import("./gltfLoader.js");
+      const gltf = await gltfLoader.loadAsync(config.gunModelUrl);
       const model = gltf.scene;
       model.scale.setScalar(config.gunScale ?? 1);
       if (config.gunRotation) {

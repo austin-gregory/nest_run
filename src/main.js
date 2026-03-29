@@ -65,11 +65,8 @@ export async function initGame() {
   // Floating force gun display model above checkpoint
   let floatingGun = null;
   {
-    const { GLTFLoader } = await import(
-      "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm"
-    );
-    const loader = new GLTFLoader();
-    const gltf = await loader.loadAsync(FORCE_GUN_ASSETS.gunModelUrl);
+    const { gltfLoader } = await import("./gltfLoader.js");
+    const gltf = await gltfLoader.loadAsync(FORCE_GUN_ASSETS.gunModelUrl);
     setLoading(50, 'Loading enemies...');
     floatingGun = gltf.scene;
     floatingGun.scale.setScalar(1.5);
@@ -176,13 +173,12 @@ export async function initGame() {
   let bugGLTF = null, bugBaseMat = null, skeletonClone = null;
   const BUG_SCALE = 3.0;
   {
-    const [{ GLTFLoader }, su] = await Promise.all([
-      import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm"),
+    const [{ gltfLoader }, su] = await Promise.all([
+      import("./gltfLoader.js"),
       import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/SkeletonUtils.js/+esm"),
     ]);
     skeletonClone = su.clone;
-    const loader = new GLTFLoader();
-    bugGLTF = await loader.loadAsync("./assets/alien-bug.glb");
+    bugGLTF = await gltfLoader.loadAsync("./assets/alien-bug.glb");
     setLoading(65, 'Loading players...');
     const tl = new THREE.TextureLoader();
     const [diff, rough, norm] = await Promise.all([
@@ -809,22 +805,20 @@ export async function initGame() {
   // Pre-load human model
   let humanGLTF = null;
   {
-    const [{ GLTFLoader }, su] = await Promise.all([
-      import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm"),
+    const [{ gltfLoader }, su] = await Promise.all([
+      import("./gltfLoader.js"),
       import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/SkeletonUtils.js/+esm"),
     ]);
     if (!skeletonClone) skeletonClone = su.clone;
-    const loader = new GLTFLoader();
-    humanGLTF = await loader.loadAsync("./assets/new_shooter.glb");
+    humanGLTF = await gltfLoader.loadAsync("./assets/new_shooter.glb");
     setLoading(85, 'Loading traps...');
   }
 
   // Pre-load trap rope model
   let trapGLTF = null;
   {
-    const { GLTFLoader } = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm");
-    const loader = new GLTFLoader();
-    trapGLTF = await loader.loadAsync("./assets/trap.glb");
+    const { gltfLoader } = await import("./gltfLoader.js");
+    trapGLTF = await gltfLoader.loadAsync("./assets/trap.glb");
     setLoading(100, 'Connecting...');
   }
 

@@ -85,11 +85,8 @@ export async function initArena() {
   // Floating force gun display model above checkpoint
   let floatingGun = null;
   {
-    const { GLTFLoader } = await import(
-      "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm"
-    );
-    const loader = new GLTFLoader();
-    const gltf = await loader.loadAsync(FORCE_GUN_ASSETS.gunModelUrl);
+    const { gltfLoader } = await import("./gltfLoader.js");
+    const gltf = await gltfLoader.loadAsync(FORCE_GUN_ASSETS.gunModelUrl);
     floatingGun = gltf.scene;
     floatingGun.scale.setScalar(1.5);
     floatingGun.position.set(0, 1.2, 0);
@@ -612,13 +609,12 @@ export async function initArena() {
   let humanGLTF = null;
   let skeletonClone = null;
   {
-    const [{ GLTFLoader }, su] = await Promise.all([
-      import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm"),
+    const [{ gltfLoader }, su] = await Promise.all([
+      import("./gltfLoader.js"),
       import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/SkeletonUtils.js/+esm"),
     ]);
     skeletonClone = su.clone;
-    const loader = new GLTFLoader();
-    humanGLTF = await loader.loadAsync("./assets/new_shooter.glb");
+    humanGLTF = await gltfLoader.loadAsync("./assets/new_shooter.glb");
   }
 
   const JOINT_ZONE = [];

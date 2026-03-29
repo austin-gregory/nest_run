@@ -910,7 +910,7 @@ setInterval(pollRooms, 2000);
 
 <script type="module">
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
-import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm";
+import { gltfLoader } from "./src/gltfLoader.js";
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/SkeletonUtils.js/+esm";
 import { getMyCustomization, saveCustomization } from "./src/supabase.js";
 
@@ -975,9 +975,8 @@ function initPreview() {
 let humanGLTF = null;
 async function loadModel() {
   if (humanGLTF) return;
-  const loader = new GLTFLoader();
   humanGLTF = await new Promise((resolve, reject) => {
-    loader.load("./assets/newshooter.glb", resolve, undefined, reject);
+    gltfLoader.load("./assets/new_shooter.glb", resolve, undefined, reject);
   });
 }
 
