@@ -43,29 +43,31 @@ jobs:
           push: true
           tags: ${{ env.NGINX_IMAGE }}:latest,${{ env.NGINX_IMAGE }}:${{ github.sha }}
 
-      - name: Copy compose file to VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.PROD_SSH_HOST }}
-          username: ${{ secrets.PROD_SSH_USER }}
-          key: ${{ secrets.PROD_SSH_KEY }}
-          source: docker-compose.prod.yml
-          target: /docker/nest-run/
-
       - name: Deploy to Hostinger VPS
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.PROD_SSH_HOST }}
-          username: ${{ secrets.PROD_SSH_USER }}
-          key: ${{ secrets.PROD_SSH_KEY }}
-          envs: SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY,SUPABASE_ANON_KEY
-          script: |
-            cd /docker/nest-run
-            echo "$GITHUB_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d
         env:
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          echo "$PROD_SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          SSH="ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no $PROD_SSH_USER@$PROD_SSH_HOST"
+          scp -i /tmp/deploy_key -o StrictHostKeyChecking=no docker-compose.prod.yml $PROD_SSH_USER@$PROD_SSH_HOST:/docker/nest-run/
+          $SSH "
+            cd /docker/nest-run &&
+            echo '$GITHUB_TOKEN' | docker login ghcr.io -u $ACTOR --password-stdin &&
+            SUPABASE_URL='$SUPABASE_URL' \
+            SUPABASE_SERVICE_ROLE_KEY='$SUPABASE_SERVICE_ROLE_KEY' \
+            SUPABASE_ANON_KEY='$SUPABASE_ANON_KEY' \
+            docker compose -f docker-compose.prod.yml pull &&
+            SUPABASE_URL='$SUPABASE_URL' \
+            SUPABASE_SERVICE_ROLE_KEY='$SUPABASE_SERVICE_ROLE_KEY' \
+            SUPABASE_ANON_KEY='$SUPABASE_ANON_KEY' \
+            docker compose -f docker-compose.prod.yml up -d
+          "
+          rm /tmp/deploy_key
