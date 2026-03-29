@@ -51,6 +51,7 @@ jobs:
           file: nginx.Dockerfile
           platforms: linux/amd64
           push: true
+          build-args: NGINX_CONF=nginx.conf
           tags: ${{ env.NGINX_IMAGE }}:latest,${{ env.NGINX_IMAGE }}:${{ github.sha }}
 
       - name: Deploy to Hostinger VPS

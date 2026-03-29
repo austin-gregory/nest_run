@@ -1,2 +1,3 @@
 FROM nginx:alpine
-COPY nginx.local.conf /etc/nginx/nginx.conf
+ARG NGINX_CONF=nginx.local.conf
+COPY ${NGINX_CONF} /etc/nginx/nginx.conf
