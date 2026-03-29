@@ -12,6 +12,9 @@ env:
 jobs:
   deploy:
     runs-on: [self-hosted, Linux, ARM64]
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout
