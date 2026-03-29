@@ -1,4 +1,4 @@
-name: Deploy to Docker Swarm
+name: Deploy to Hostinger (prod)
 
 on:
   push:
@@ -43,15 +43,29 @@ jobs:
           push: true
           tags: ${{ env.NGINX_IMAGE }}:latest,${{ env.NGINX_IMAGE }}:${{ github.sha }}
 
-      - name: Deploy stack
+      - name: Copy compose file to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          source: docker-compose.prod.yml
+          target: /docker/nest-run/
+
+      - name: Deploy to Hostinger VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          envs: SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY,SUPABASE_ANON_KEY
+          script: |
+            cd /docker/nest-run
+            echo "$GITHUB_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d
         env:
-          APP_IMAGE: ${{ env.APP_IMAGE }}:${{ github.sha }}
-          NGINX_IMAGE: ${{ env.NGINX_IMAGE }}:${{ github.sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: |
-          docker stack deploy \
-            --compose-file docker-compose.swarm.yml \
-            --with-registry-auth \
-            nest_run
