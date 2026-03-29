@@ -9,6 +9,18 @@ import { recordGame, getUser, getDisplayName, getCachedCustomization } from "./s
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
+function setLoading(pct, label) {
+  const bar = document.getElementById('loading-bar');
+  const lbl = document.getElementById('loading-label');
+  const screen = document.getElementById('loading-screen');
+  if (bar) bar.style.width = pct + '%';
+  if (lbl) lbl.textContent = label;
+  if (pct >= 100 && screen) {
+    screen.style.opacity = '0';
+    setTimeout(() => screen.remove(), 400);
+  }
+}
+
 export async function initGame() {
   const ui = createUI();
 
@@ -29,8 +41,11 @@ export async function initGame() {
   sun.position.set(120, 180, 30);
   scene.add(sun);
 
+  setLoading(5, 'Building world...');
   const map = await createWorld(scene);
+  setLoading(20, 'Loading weapons...');
   const weaponView = await createWeaponView(scene, ASSETS);
+  setLoading(35, 'Loading force gun...');
   const forceGunView = await createWeaponView(scene, FORCE_GUN_ASSETS);
   forceGunView.gun.visible = false;
 
@@ -55,6 +70,7 @@ export async function initGame() {
     );
     const loader = new GLTFLoader();
     const gltf = await loader.loadAsync(FORCE_GUN_ASSETS.gunModelUrl);
+    setLoading(50, 'Loading enemies...');
     floatingGun = gltf.scene;
     floatingGun.scale.setScalar(1.5);
     floatingGun.position.set(checkpointPos.x, checkpointY + 1.2, checkpointPos.z);
@@ -167,6 +183,7 @@ export async function initGame() {
     skeletonClone = su.clone;
     const loader = new GLTFLoader();
     bugGLTF = await loader.loadAsync("./assets/alien-bug.glb");
+    setLoading(65, 'Loading players...');
     const tl = new THREE.TextureLoader();
     const [diff, rough, norm] = await Promise.all([
       tl.loadAsync("./assets/tex/bug-d.png"),
@@ -799,6 +816,7 @@ export async function initGame() {
     if (!skeletonClone) skeletonClone = su.clone;
     const loader = new GLTFLoader();
     humanGLTF = await loader.loadAsync("./assets/new_shooter.glb");
+    setLoading(85, 'Loading traps...');
   }
 
   // Pre-load trap rope model
@@ -807,6 +825,7 @@ export async function initGame() {
     const { GLTFLoader } = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js/+esm");
     const loader = new GLTFLoader();
     trapGLTF = await loader.loadAsync("./assets/trap.glb");
+    setLoading(100, 'Connecting...');
   }
 
   // Zone mapping: joint index -> body zone (based on HumanBase.glb skeleton)
