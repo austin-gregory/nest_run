@@ -629,8 +629,7 @@ export async function initGame() {
     next.reset().fadeIn(0.15).play();
     if (prev) prev.fadeOut(0.15);
     if (name === "attack" && en.curAction !== "attack") {
-      bugAttackSound.currentTime = 0;
-      bugAttackSound.play().catch(() => {});
+      playBugAttack();
     }
     en.curAction = name;
   }
@@ -747,8 +746,11 @@ export async function initGame() {
   gunSound.volume = 0.5;
   const forceGunSound = new Audio("./assets/forc_gun.flac");
   forceGunSound.volume = 0.5;
-  const bugAttackSound = new Audio("./assets/bug.flac");
-  bugAttackSound.volume = 0.4;
+  function playBugAttack() {
+    const snd = new Audio("./assets/bug.flac");
+    snd.volume = 0.4;
+    snd.play().catch(() => {});
+  }
 
   const rayc = new THREE.Raycaster();
   const shootDir = new THREE.Vector3();
