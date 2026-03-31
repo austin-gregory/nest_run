@@ -158,6 +158,8 @@ export async function initArena() {
     if (now < forceWeapon.can) return;
     forceWeapon.can = now + 1 / forceWeapon.rate;
 
+    forceGunSound.currentTime = 0;
+    forceGunSound.play().catch(() => {});
     forceGunView.kick();
 
     _fpDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -542,6 +544,8 @@ export async function initArena() {
   // ── Shooting ──────────────────────────────────────────────────────────
   const gunSound = new Audio("./assets/smg.wav");
   gunSound.volume = 0.5;
+  const forceGunSound = new Audio("./assets/forc_gun.flac");
+  forceGunSound.volume = 0.5;
 
   function shoot() {
     if (!(input.pointer.locked || input.gamepad.connected) || game.resp || !game.started) return;

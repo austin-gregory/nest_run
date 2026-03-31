@@ -75,6 +75,7 @@ const MIME = {
   ".wav": "audio/wav",
   ".mp3": "audio/mpeg",
   ".ogg": "audio/ogg",
+  ".flac": "audio/flac",
 };
 
 function safeJoin(root, requestedPath) {

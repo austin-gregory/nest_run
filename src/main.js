@@ -99,6 +99,8 @@ export async function initGame() {
     if (now < forceWeapon.can) return;
     forceWeapon.can = now + 1 / forceWeapon.rate;
 
+    forceGunSound.currentTime = 0;
+    forceGunSound.play().catch(() => {});
     forceGunView.kick();
 
     // Player forward direction (flat)
@@ -739,6 +741,10 @@ export async function initGame() {
   // ── Gun sound ──────────────────────────────────────────────────────────
   const gunSound = new Audio("./assets/smg.wav");
   gunSound.volume = 0.5;
+  const forceGunSound = new Audio("./assets/forc_gun.flac");
+  forceGunSound.volume = 0.5;
+  const bugAttackSound = new Audio("./assets/bug.flac");
+  bugAttackSound.volume = 0.4;
 
   const rayc = new THREE.Raycaster();
   const shootDir = new THREE.Vector3();
@@ -1570,6 +1576,8 @@ export async function initGame() {
           en.atk = 0.75;
           const playerInSafe = Math.hypot(player.pos.x - WORLD.SPAWN_X, player.pos.z - WORLD.SPAWN_Z) <= WORLD.SPAWN_SAFE_RADIUS;
           if (!game.resp && !playerInSafe) {
+            bugAttackSound.currentTime = 0;
+            bugAttackSound.play().catch(() => {});
             const dmgScale = 1 / (1 + enemies.length * 0.12);
             player.hp -= (8 + Math.random() * 4 + game.deaths * 0.8) * dmgScale;
             player.hp = Math.max(0, player.hp);
