@@ -68,9 +68,16 @@
       font-family:monospace;font-size:13px;letter-spacing:3px;
       background:rgba(200,0,10,.7);color:#fff;padding:4px 14px;border-radius:4px;
       border:1px solid rgba(255,60,60,.3);}
+    /* ── Loading screen ───────────────────────────────────────── */
+    #loading-screen{position:fixed;inset:0;z-index:9999;background:#05070a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;font-family:'Courier New',Courier,monospace;transition:opacity .4s}
+    #loading-screen h1{font-size:42px;letter-spacing:.2em;color:#fff;margin:0}
+    #loading-label{font-size:13px;letter-spacing:.15em;color:rgba(0,190,255,.7);text-transform:uppercase;min-height:18px}
+    #loading-track{width:320px;height:6px;background:rgba(255,255,255,.06);border:1px solid rgba(0,180,255,.2);border-radius:3px;overflow:hidden}
+    #loading-bar{height:100%;width:0%;background:linear-gradient(90deg,rgba(0,140,255,.8),rgba(0,220,255,1));border-radius:3px;transition:width .3s;box-shadow:0 0 8px rgba(0,200,255,.5)}
   </style>
 </head>
 <body>
+<div id="loading-screen"><h1>NEST RUN</h1><div id="loading-label">0% — Initializing...</div><div id="loading-track"><div id="loading-bar"></div></div></div>
 <div id="hud">
   <div id="a"><b>Nest Run — ARENA</b><div>Click to play • WASD • Shift • Space • LMB • RMB</div></div>
   <div id="m"></div><div id="bn"></div><div id="x"></div>

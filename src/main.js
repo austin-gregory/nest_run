@@ -14,7 +14,7 @@ function setLoading(pct, label) {
   const lbl = document.getElementById('loading-label');
   const screen = document.getElementById('loading-screen');
   if (bar) bar.style.width = pct + '%';
-  if (lbl) lbl.textContent = label;
+  if (lbl) lbl.textContent = pct + '% — ' + label;
   if (pct >= 100 && screen) {
     screen.style.opacity = '0';
     setTimeout(() => screen.remove(), 400);

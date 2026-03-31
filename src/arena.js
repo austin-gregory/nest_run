@@ -9,6 +9,18 @@ import { getUser, getDisplayName, getCachedCustomization } from "./supabase.js";
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
+function setLoading(pct, label) {
+  const bar = document.getElementById('loading-bar');
+  const lbl = document.getElementById('loading-label');
+  const screen = document.getElementById('loading-screen');
+  if (bar) bar.style.width = pct + '%';
+  if (lbl) lbl.textContent = pct + '% — ' + label;
+  if (pct >= 100 && screen) {
+    screen.style.opacity = '0';
+    setTimeout(() => screen.remove(), 400);
+  }
+}
+
 export async function initArena() {
   const ui = createUI();
 
@@ -29,8 +41,11 @@ export async function initArena() {
   sun.position.set(120, 180, 30);
   scene.add(sun);
 
+  setLoading(5, 'Building arena...');
   const map = createArenaWorld(scene);
+  setLoading(20, 'Loading weapons...');
   const weaponView = await createWeaponView(scene, ASSETS);
+  setLoading(35, 'Loading force gun...');
   const forceGunView = await createWeaponView(scene, FORCE_GUN_ASSETS);
   forceGunView.gun.visible = false;
 
@@ -87,6 +102,7 @@ export async function initArena() {
   {
     const { gltfLoader } = await import("./gltfLoader.js");
     const gltf = await gltfLoader.loadAsync(FORCE_GUN_ASSETS.gunModelUrl);
+    setLoading(50, 'Loading players...');
     floatingGun = gltf.scene;
     floatingGun.scale.setScalar(1.5);
     floatingGun.position.set(0, 1.2, 0);
@@ -615,6 +631,7 @@ export async function initArena() {
     ]);
     skeletonClone = su.clone;
     humanGLTF = await gltfLoader.loadAsync("./assets/new_shooter.glb");
+    setLoading(85, 'Connecting...');
   }
 
   const JOINT_ZONE = [];
@@ -1174,6 +1191,7 @@ export async function initArena() {
       room = await createArenaRoom("Arena Room");
     }
     mySessionId = room.sessionId;
+    setLoading(100, 'Ready!');
 
     // Waiting overlay
     waitingOverlay = document.createElement("div");
