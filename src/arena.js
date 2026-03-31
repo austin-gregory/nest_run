@@ -126,7 +126,7 @@ export async function initArena() {
   const forceWaves = [];
   const _fpDir = new THREE.Vector3();
   const _fpToPlayer = new THREE.Vector3();
-  const forceWeapon = { rate: 1.5, can: 0 };
+  const forceWeapon = { rate: 0.5, can: 0 };
 
   function updateForceWaves(dt) {
     for (let i = forceWaves.length - 1; i >= 0; i--) {

@@ -89,7 +89,7 @@ export async function initGame() {
 
   // ── Force push mechanic ─────────────────────────────────────────────────
   const forceWaves = [];
-  const forceWeapon = { rate: 1.5, can: 0 };
+  const forceWeapon = { rate: 0.5, can: 0 };
   const _fpDir = new THREE.Vector3();
   const _fpToEnemy = new THREE.Vector3();
 
@@ -113,11 +113,11 @@ export async function initGame() {
       _fpToEnemy.copy(en.mesh.position).sub(player.pos);
       _fpToEnemy.y = 0;
       const dist = _fpToEnemy.length();
-      if (dist > 54 || dist < 0.1) continue;
+      if (dist > 15 || dist < 0.1) continue;
       _fpToEnemy.normalize();
       if (_fpDir.dot(_fpToEnemy) < 0) continue;
       // Massive impulse away from player — closer bugs get pushed harder
-      const falloff = 1 - (dist / 54) * 0.5; // 1.0 at point blank, 0.5 at max range
+      const falloff = 1 - (dist / 15) * 0.5; // 1.0 at point blank, 0.5 at max range
       en.vel.addScaledVector(_fpToEnemy, 60 * falloff);
       en.vy = 6;
       en.air = true;
@@ -628,6 +628,10 @@ export async function initGame() {
     const next = en.actions[name];
     next.reset().fadeIn(0.15).play();
     if (prev) prev.fadeOut(0.15);
+    if (name === "attack" && en.curAction !== "attack") {
+      bugAttackSound.currentTime = 0;
+      bugAttackSound.play().catch(() => {});
+    }
     en.curAction = name;
   }
 
@@ -1576,8 +1580,6 @@ export async function initGame() {
           en.atk = 0.75;
           const playerInSafe = Math.hypot(player.pos.x - WORLD.SPAWN_X, player.pos.z - WORLD.SPAWN_Z) <= WORLD.SPAWN_SAFE_RADIUS;
           if (!game.resp && !playerInSafe) {
-            bugAttackSound.currentTime = 0;
-            bugAttackSound.play().catch(() => {});
             const dmgScale = 1 / (1 + enemies.length * 0.12);
             player.hp -= (8 + Math.random() * 4 + game.deaths * 0.8) * dmgScale;
             player.hp = Math.max(0, player.hp);
