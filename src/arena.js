@@ -546,6 +546,9 @@ export async function initArena() {
   gunSound.volume = 0.5;
   const forceGunSound = new Audio("./assets/forc_gun.flac");
   forceGunSound.volume = 0.5;
+  const launchSound = new Audio("./assets/launch.wav");
+  launchSound.volume = 0.5;
+  launchSound.loop = true;
 
   function shoot() {
     if (!(input.pointer.locked || input.gamepad.connected) || game.resp || !game.started) return;
@@ -1017,11 +1020,13 @@ export async function initArena() {
         if (player.vel.y > player.jetMaxVelY) player.vel.y = player.jetMaxVelY;
         player.jetFuel = Math.max(0, player.jetFuel - player.jetDrainRate * dt);
         player._jetting = true;
+        if (launchSound.paused) launchSound.play().catch(() => {});
       } else {
         // Soft gravity when airborne with fuel left — lets you feather thrust to hover
         const gScale = (!player.ground && player.jetFuel > 0) ? 0.6 : 1;
         player.vel.y -= player.g * gScale * dt;
         player._jetting = false;
+        if (!launchSound.paused) { launchSound.pause(); launchSound.currentTime = 0; }
         if (!jetInput) {
           player.jetFuel = Math.min(player.jetFuelMax, player.jetFuel + player.jetRechargeRate * dt);
         }
