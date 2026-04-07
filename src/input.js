@@ -1,10 +1,17 @@
+import { isMobile, createTouchControls } from "./touch.js";
+
 export function attachInput({ element, onReload, onSwapWeapon, onLookDelta, onLockChange, onMenu, lookSensitivity = 0.0022 }) {
   const keys = new Set();
   const pointer = { locked: false, aim: false, fire: false };
 
-  element.addEventListener("click", () => {
-    element.requestPointerLock();
-  });
+  // ── Touch controls (mobile) ────────────────────────────────────────────────
+  const touch = createTouchControls({ onLookDelta, onReload, onSwapWeapon, onMenu });
+
+  if (!isMobile) {
+    element.addEventListener("click", () => {
+      element.requestPointerLock();
+    });
+  }
 
   document.addEventListener("pointerlockchange", () => {
     pointer.locked = document.pointerLockElement === element;
@@ -146,5 +153,5 @@ export function attachInput({ element, onReload, onSwapWeapon, onLookDelta, onLo
     gamepad._prevStart = startPressed;
   }
 
-  return { keys, pointer, gamepad, pollGamepad };
+  return { keys, pointer, gamepad, pollGamepad, touch: touch.state, setTouchVisible: touch.setVisible };
 }

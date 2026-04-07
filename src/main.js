@@ -2,6 +2,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 import { ASSETS, WORLD, RTS, FORCE_GUN_ASSETS } from "./constants.js";
 import { createUI } from "./ui.js";
 import { attachInput } from "./input.js";
+import { isMobile } from "./touch.js";
 import { createWorld } from "./world.js";
 import { createWeaponView } from "./weaponView.js";
 import { connectToGame, createRoom, joinRoom } from "./network.js";
@@ -94,7 +95,7 @@ export async function initGame() {
   const _fpToEnemy = new THREE.Vector3();
 
   function shootForcePush() {
-    if (!(input.pointer.locked || input.gamepad.connected) || game.win || game.resp || !game.started) return;
+    if (!(input.pointer.locked || input.gamepad.connected || input.touch.active) || game.win || game.resp || !game.started) return;
     const now = performance.now() / 1000;
     if (now < forceWeapon.can) return;
     forceWeapon.can = now + 1 / forceWeapon.rate;
@@ -297,10 +298,12 @@ export async function initGame() {
       document.exitPointerLock();
       quitOverlay.classList.add("open");
       quitMenuGpNav = gamepadMenuNav([resumeBtn, quitBtn]);
+      input?.setTouchVisible?.(false);
     } else {
       quitOverlay.classList.remove("open");
       if (quitMenuGpNav) { quitMenuGpNav.stop(); quitMenuGpNav = null; }
-      renderer.domElement.requestPointerLock();
+      input?.setTouchVisible?.(true);
+      if (!isMobile) renderer.domElement.requestPointerLock();
     }
   }
 
@@ -317,7 +320,7 @@ export async function initGame() {
       player.pitch = clamp(player.pitch + dy, -1.45, 1.45);
     },
     onLockChange: (locked) => {
-      if (!menuOpen) ui.msg(locked ? "" : "Click game to lock mouse.");
+      if (!menuOpen && !isMobile) ui.msg(locked ? "" : "Click game to lock mouse.");
     },
     onMenu: () => toggleMenu(),
   });
@@ -356,6 +359,12 @@ export async function initGame() {
     if (gp.connected) {
       if (gp.moveY !== 0) out.addScaledVector(fwd, -gp.moveY);
       if (gp.moveX !== 0) out.addScaledVector(right, gp.moveX);
+    }
+    // Touch joystick movement
+    const tc = input.touch;
+    if (tc.active) {
+      if (tc.moveY !== 0) out.addScaledVector(fwd, -tc.moveY);
+      if (tc.moveX !== 0) out.addScaledVector(right, tc.moveX);
     }
     if (out.lengthSq() > 0) out.normalize();
     return out;
@@ -782,7 +791,7 @@ export async function initGame() {
 
   function aimDir(out) {
     out.set(0, 0, -1).applyQuaternion(camera.quaternion);
-    const spread = (input.pointer.aim || input.gamepad.aim) ? weapon.ads : weapon.hip;
+    const spread = (input.pointer.aim || input.gamepad.aim || input.touch.aim) ? weapon.ads : weapon.hip;
     out.x += (Math.random() - 0.5) * spread;
     out.y += (Math.random() - 0.5) * spread;
     out.z += (Math.random() - 0.5) * spread;
@@ -1075,7 +1084,7 @@ export async function initGame() {
   // ──────────────────────────────────────────────────────────────────────
 
   function shoot() {
-    if (!(input.pointer.locked || input.gamepad.connected) || game.win || game.resp || !game.started) return;
+    if (!(input.pointer.locked || input.gamepad.connected || input.touch.active) || game.win || game.resp || !game.started) return;
     const now = performance.now() / 1000;
     if (now < weapon.can) return;
 
@@ -1085,7 +1094,7 @@ export async function initGame() {
     gunSound.currentTime = 0;
     gunSound.play().catch(() => {});
 
-    const isAiming = input.pointer.aim || input.gamepad.aim;
+    const isAiming = input.pointer.aim || input.gamepad.aim || input.touch.aim;
     const recoilMul = isAiming ? 0.72 : 1;
     player.pitch = clamp(player.pitch + weapon.rp * recoilMul, -1.45, 1.45);
     player.yaw += (Math.random() * 2 - 1) * weapon.ry * (isAiming ? 0.55 : 1);
@@ -2130,7 +2139,7 @@ export async function initGame() {
     if (!menuOpen) {
 
     wish(wishMove);
-    const sprint = input.keys.has("ShiftLeft") || input.keys.has("ShiftRight") || gp.sprint;
+    const sprint = input.keys.has("ShiftLeft") || input.keys.has("ShiftRight") || gp.sprint || input.touch.sprint;
     const speed = player.ground ? (sprint ? player.ss : player.ws) : player.as;
 
     if (!game.resp && !game.win && game.started && !trapActive) {
@@ -2142,7 +2151,7 @@ export async function initGame() {
         accel(wishMove, speed, player.aa, dt);
       }
       player.vel.y -= player.g * dt;
-      if (player.ground && (input.keys.has("Space") || gp.jump)) {
+      if (player.ground && (input.keys.has("Space") || gp.jump || input.touch.jump)) {
         player.vel.y = player.j;
         player.ground = false;
       }
@@ -2240,14 +2249,14 @@ export async function initGame() {
 
     veil.style.opacity = game.resp ? (game.respT / 3) * 0.55 : 0;
 
-    const aiming = input.pointer.aim || gp.aim;
+    const aiming = input.pointer.aim || gp.aim || input.touch.aim;
     const fov = aiming ? 30 : sprint ? 100 : 94;
     camera.fov += (fov - camera.fov) * Math.min(1, 12 * dt);
     camera.updateProjectionMatrix();
     ui.setCrosshairAim(aiming, trapActive);
 
     const sway = aiming ? 0.35 : 1;
-    const movingForward = (input.keys.has("KeyW") && !input.keys.has("KeyS")) || gp.moveY < -0.3;
+    const movingForward = (input.keys.has("KeyW") && !input.keys.has("KeyS")) || gp.moveY < -0.3 || input.touch.moveY < -0.3;
     const swayFreqX = 2.1;
     const swayFreqY = movingForward ? 1.25 : 2;
     const swx = (Math.sin(t * swayFreqX) * 0.014 + bx * 0.8) * sway;
@@ -2292,7 +2301,7 @@ export async function initGame() {
       muzzleFlashLight.intensity = 0;
     }
 
-    if (input.pointer.fire || gp.fire) {
+    if (input.pointer.fire || gp.fire || input.touch.fire) {
       if (activeWeapon === "force") shootForcePush();
       else shoot();
     }
