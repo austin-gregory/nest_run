@@ -63,9 +63,9 @@ export async function getAvailableRooms() {
  * @param {string} [roomName]
  * @returns {Promise<import("colyseus.js").Room>}
  */
-export async function createArenaRoom(roomName) {
+export async function createArenaRoom(roomName, addBots) {
   const client = await getClient();
-  const room = await client.create("arena", { roomName });
+  const room = await client.create("arena", { roomName, addBots: !!addBots });
   return room;
 }
 

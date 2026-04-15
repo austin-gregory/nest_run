@@ -106,6 +106,9 @@ export function createTouchControls({ onLookDelta, onReload, onSwapWeapon, onMen
   lookZone.addEventListener("touchstart", (e) => {
     for (const t of e.changedTouches) {
       if (lookTouchId !== null) continue;
+      // Ignore touches that land on a button
+      const el = document.elementFromPoint(t.clientX, t.clientY);
+      if (el && el.classList && el.classList.contains("touch-btn")) continue;
       lookTouchId = t.identifier;
       lookLastX = t.clientX;
       lookLastY = t.clientY;

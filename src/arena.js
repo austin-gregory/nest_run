@@ -213,7 +213,7 @@ export async function initArena() {
     yaw: 0,
     pitch: 0,
     ground: false,
-    hp: 200,
+    hp: 500,
     height: 1.75,
     r: 0.36,
     g: 22,
@@ -294,7 +294,7 @@ export async function initArena() {
   function hud() {
     ui.hud({
       hp: player.hp,
-      maxHp: 200,
+      maxHp: 500,
       enemies: otherPlayers.size + 1,
       kills: game.kills,
       deaths: game.deaths,
@@ -903,7 +903,7 @@ export async function initArena() {
 
   function respawnPlayer() {
     game.resp = false;
-    player.hp = 200;
+    player.hp = 500;
     player.jetFuel = player.jetFuelMax;
     player.vel.set(0, 0, 0);
     const sp = ARENA_SPAWN_POINTS[myColorIndex] || ARENA_SPAWN_POINTS[0];
@@ -1195,13 +1195,14 @@ export async function initArena() {
   const paramRoomId = urlParams.get("roomId");
   const paramCreate = urlParams.get("create") === "true";
   const paramRoomName = urlParams.get("roomName");
+  const paramAddBots = urlParams.get("addBots") === "true";
 
   let waitingOverlay = null;
   let waitingGpNav = null;
 
   try {
     if (paramCreate) {
-      room = await createArenaRoom(paramRoomName || "Arena Room");
+      room = await createArenaRoom(paramRoomName || "Arena Room", paramAddBots);
     } else if (paramRoomId) {
       room = await joinArenaRoom(paramRoomId);
     } else {

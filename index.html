@@ -297,6 +297,11 @@
       <input class="create-input" id="room-name-input" type="text" placeholder="Room name (optional)" maxlength="30" />
       <button class="create-btn" id="btn-create" disabled>CREATE ROOM</button>
     </div>
+    <div class="create-row" id="bot-option-row" style="display:none;margin-top:6px;">
+      <label style="color:#8af;font-family:monospace;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;">
+        <input type="checkbox" id="add-bots-checkbox" style="width:16px;height:16px;cursor:pointer;" /> Fill empty slots with bots
+      </label>
+    </div>
   </div>
 
   <div class="error-msg" id="error-msg"></div>
@@ -691,12 +696,16 @@ const roomsHeader = document.getElementById("rooms-header");
 const errorMsg = document.getElementById("error-msg");
 
 // ── Role selection ──────────────────────────────────────────────────────
+const botOptionRow = document.getElementById("bot-option-row");
+const addBotsCheckbox = document.getElementById("add-bots-checkbox");
+
 function selectRole(role) {
   selectedRole = role;
   btnFps.classList.toggle("active", role === "fps");
   btnRts.classList.toggle("active", role === "rts");
   btnArena.classList.toggle("active", role === "arena");
   btnCreate.disabled = false;
+  botOptionRow.style.display = role === "arena" ? "" : "none";
   roomsHeader.textContent = role === "arena" ? "Arena Rooms" : "Available Rooms";
   renderRooms(lastRooms);
 }
@@ -710,7 +719,8 @@ btnCreate.addEventListener("click", () => {
   if (!selectedRole) return;
   const roomName = roomNameInput.value.trim() || (selectedRole === "arena" ? "Arena Room" : "Game Room");
   if (selectedRole === "arena") {
-    const params = new URLSearchParams({ create: "true", roomName });
+    const addBots = addBotsCheckbox.checked;
+    const params = new URLSearchParams({ create: "true", roomName, ...(addBots ? { addBots: "true" } : {}) });
     window.location.href = `/arena.html?${params}`;
   } else {
     const page = selectedRole === "fps" ? "shooter_v2.html" : "rts.html";
@@ -1036,18 +1046,15 @@ function spawnPreviewModel() {
   previewModel.rotation.y = 0; // face camera
   scene.add(previewModel);
 
-  // Apply T-Pose for the character editor
+  // Apply idle pose (run_forward frozen at frame 0) for the character editor
   const clips = humanGLTF.animations;
   if (clips && clips.length > 0) {
     previewMixer = new THREE.AnimationMixer(previewModel);
-    const tposeClip = THREE.AnimationClip.findByName(clips, "T-Pose")
-      || THREE.AnimationClip.findByName(clips, "TPose")
-      || THREE.AnimationClip.findByName(clips, "T_Pose")
-      || THREE.AnimationClip.findByName(clips, "Tpose");
-    if (tposeClip) {
-      const action = previewMixer.clipAction(tposeClip);
+    const idleClip = THREE.AnimationClip.findByName(clips, "run_forward");
+    if (idleClip) {
+      const action = previewMixer.clipAction(idleClip);
       action.setLoop(THREE.LoopRepeat, Infinity);
-      action.timeScale = 0; // freeze at first frame
+      action.timeScale = 0; // freeze at first frame = idle stance
       action.play();
       previewMixer.update(0);
     }
