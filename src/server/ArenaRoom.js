@@ -34,9 +34,11 @@ class ArenaRoom extends Room {
       if (data.targetSid.startsWith("bot-")) {
         const bot = this._bots.find(b => b.sid === data.targetSid);
         if (bot && !bot.dead) {
+          const wasAlive = bot.hp > 0;
           bot.hp -= data.dmg;
           if (bot.hp <= 0) {
             BotAI.killBot(bot);
+            if (wasAlive) this.send(client, "kill", { victimSid: bot.sid });
           }
           const p = this.state.players.get(bot.sid);
           if (p) p.hp = bot.hp;
@@ -49,6 +51,17 @@ class ArenaRoom extends Room {
           dmg: data.dmg,
           attackerSid: client.sessionId,
         });
+      }
+    });
+
+    // Player reports own death — credit the attacker with a kill
+    this.onMessage("playerDied", (client, data) => {
+      if (!data || !data.attackerSid) return;
+      if (data.attackerSid.startsWith("bot-")) return;
+      if (data.attackerSid === client.sessionId) return;
+      const attackerClient = this.clients.find(c => c.sessionId === data.attackerSid);
+      if (attackerClient) {
+        this.send(attackerClient, "kill", { victimSid: client.sessionId });
       }
     });
 

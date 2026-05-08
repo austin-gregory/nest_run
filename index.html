@@ -289,6 +289,10 @@
     <div class="role-btns">
       <button class="role-btn" data-role="arena" id="btn-arena">JETPACK ARENA</button>
     </div>
+    <div class="role-label" style="margin-top:16px">VR (Quest 3, etc.)</div>
+    <div class="role-btns">
+      <button class="role-btn" id="btn-vr-toggle">VR MODE: OFF</button>
+    </div>
   </div>
 
   <!-- Create room -->
@@ -320,6 +324,8 @@
 <!-- 3D background flyby -->
 <script type="module">
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+
+window.__nestVR = { enabled: false };
 
 (function initBgScene() {
   const canvas = document.getElementById("bg-canvas");
@@ -573,6 +579,14 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
     renderer.render(scene, camera);
   }
   animate();
+
+  // ── VR toggle: just a flag — actual XR session starts on the game page ──
+  const vrBtn = document.getElementById("btn-vr-toggle");
+  vrBtn.addEventListener("click", () => {
+    window.__nestVR.enabled = !window.__nestVR.enabled;
+    vrBtn.textContent = "VR MODE: " + (window.__nestVR.enabled ? "ON" : "OFF");
+    vrBtn.classList.toggle("active", window.__nestVR.enabled);
+  });
 })();
 </script>
 
@@ -718,13 +732,14 @@ btnArena.addEventListener("click", () => selectRole("arena"));
 btnCreate.addEventListener("click", () => {
   if (!selectedRole) return;
   const roomName = roomNameInput.value.trim() || (selectedRole === "arena" ? "Arena Room" : "Game Room");
+  const vrOn = !!(window.__nestVR && window.__nestVR.enabled) && selectedRole !== "rts";
   if (selectedRole === "arena") {
     const addBots = addBotsCheckbox.checked;
-    const params = new URLSearchParams({ create: "true", roomName, ...(addBots ? { addBots: "true" } : {}) });
+    const params = new URLSearchParams({ create: "true", roomName, ...(addBots ? { addBots: "true" } : {}), ...(vrOn ? { vr: "1" } : {}) });
     window.location.href = `/arena.html?${params}`;
   } else {
     const page = selectedRole === "fps" ? "shooter_v2.html" : "rts.html";
-    const params = new URLSearchParams({ create: "true", roomName, role: selectedRole });
+    const params = new URLSearchParams({ create: "true", roomName, role: selectedRole, ...(vrOn ? { vr: "1" } : {}) });
     window.location.href = `/${page}?${params}`;
   }
 });
@@ -789,12 +804,13 @@ function renderRooms(rooms) {
 
     if (!disabled) {
       item.addEventListener("click", () => {
+        const vrOn = !!(window.__nestVR && window.__nestVR.enabled) && selectedRole !== "rts";
         if (isArenaMode) {
-          const params = new URLSearchParams({ roomId: room.roomId });
+          const params = new URLSearchParams({ roomId: room.roomId, ...(vrOn ? { vr: "1" } : {}) });
           window.location.href = `/arena.html?${params}`;
         } else {
           const page = selectedRole === "fps" ? "shooter_v2.html" : "rts.html";
-          const params = new URLSearchParams({ roomId: room.roomId, role: selectedRole });
+          const params = new URLSearchParams({ roomId: room.roomId, role: selectedRole, ...(vrOn ? { vr: "1" } : {}) });
           window.location.href = `/${page}?${params}`;
         }
       });

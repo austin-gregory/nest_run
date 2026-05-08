@@ -3,8 +3,8 @@
 // All physics mirror the client constants from arena.js / arenaWorld.js.
 
 const GRAVITY     = 22;
-const WALK_SPEED  = 6.8;
-const AIR_SPEED   = 6.2;
+const WALK_SPEED  = 5.0;
+const AIR_SPEED   = 4.6;
 const GROUND_ACCEL = 45;
 const AIR_ACCEL   = 12;
 const GROUND_FRIC = 10;
@@ -275,8 +275,8 @@ function tick(bot, dt, players, room) {
     const dy = (curTarget.y) - (bot.y);
     const dz = curTarget.z - bot.z;
     const hDist = Math.sqrt(dx * dx + dz * dz);
-    const desiredYaw = Math.atan2(dx, dz);
-    const desiredPitch = -Math.atan2(dy, hDist);
+    const desiredYaw = Math.atan2(-dx, -dz);
+    const desiredPitch = Math.atan2(dy, hDist);
 
     // Lerp toward target (not instant snap)
     let yawDiff = desiredYaw - bot.yaw;
@@ -411,9 +411,9 @@ function shootSMG(bot, target, targetSid, room) {
 function shootForceGun(bot, players, room) {
   bot.shootCooldown = 1 / FORCE_RATE;
 
-  // Facing direction (horizontal)
-  const fdx = Math.sin(bot.yaw);
-  const fdz = Math.cos(bot.yaw);
+  // Facing direction (horizontal) — matches camera forward (-sin, -cos)
+  const fdx = -Math.sin(bot.yaw);
+  const fdz = -Math.cos(bot.yaw);
 
   players.forEach((p, sid) => {
     if (sid === bot.sid || p.hp <= 0) return;

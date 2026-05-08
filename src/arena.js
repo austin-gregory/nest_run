@@ -36,7 +36,109 @@ export async function initArena() {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   document.body.appendChild(renderer.domElement);
 
+  // ── VR / WebXR setup ──────────────────────────────────────────────────
+  const vrMode = new URLSearchParams(window.location.search).get("vr") === "1";
+  const xr = {
+    enabled: vrMode,
+    rig: new THREE.Group(),       // moves with player.pos; camera is a child so head pose adds on top
+    rightHand: null,              // gun hand
+    leftHand: null,               // locomotion hand
+    rightGrip: null,
+    leftGrip: null,
+    triggerPrev: false,
+    snapTurnArmed: true,
+    SNAP_DEG: 30,
+  };
+  if (vrMode) {
+    renderer.xr.enabled = true;
+    renderer.xr.setReferenceSpaceType("local-floor");
+    const { VRButton } = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js/+esm");
+    const enterBtn = VRButton.createButton(renderer);
+    enterBtn.style.cssText += ";z-index:1000";
+    document.body.appendChild(enterBtn);
+  }
+
   const camera = new THREE.PerspectiveCamera(94, innerWidth / innerHeight, 0.05, 600);
+  scene.add(xr.rig);
+  xr.rig.add(camera);
+
+  if (vrMode) {
+    const { XRControllerModelFactory } = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/XRControllerModelFactory.js/+esm");
+    const factory = new XRControllerModelFactory();
+
+    // Two controllers — bind by handedness as soon as they connect
+    const c0 = renderer.xr.getController(0);
+    const c1 = renderer.xr.getController(1);
+    const g0 = renderer.xr.getControllerGrip(0);
+    const g1 = renderer.xr.getControllerGrip(1);
+    xr.rig.add(c0); xr.rig.add(c1); xr.rig.add(g0); xr.rig.add(g1);
+    g0.add(factory.createControllerModel(g0));
+    g1.add(factory.createControllerModel(g1));
+
+    // Build wrist HUD (canvas-backed plane), attached to whichever controller is left
+    xr.hudCanvas = document.createElement("canvas");
+    xr.hudCanvas.width = 320; xr.hudCanvas.height = 200;
+    xr.hudCtx = xr.hudCanvas.getContext("2d");
+    xr.hudTex = new THREE.CanvasTexture(xr.hudCanvas);
+    xr.hudTex.colorSpace = THREE.SRGBColorSpace;
+    const hudPanel = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.16, 0.10),
+      new THREE.MeshBasicMaterial({ map: xr.hudTex, transparent: true, depthTest: false })
+    );
+    hudPanel.renderOrder = 999;
+    // Tilt panel ~50° so it reads when the user glances at the back of their wrist
+    hudPanel.rotation.x = -Math.PI * 0.28;
+    hudPanel.position.set(0, 0.04, 0.08);
+    xr.hudPanel = hudPanel;
+
+    const bindController = (ctrl, grip) => (e) => {
+      const hand = e.data?.handedness;
+      if (hand === "right") { xr.rightHand = ctrl; xr.rightGrip = grip; xr.rightInput = e.data; }
+      else if (hand === "left") {
+        xr.leftHand = ctrl; xr.leftGrip = grip; xr.leftInput = e.data;
+        if (xr.hudPanel.parent !== grip) grip.add(xr.hudPanel);
+      }
+    };
+    c0.addEventListener("connected", bindController(c0, g0));
+    c1.addEventListener("connected", bindController(c1, g1));
+    const detach = (ctrl) => () => {
+      if (xr.rightHand === ctrl) { xr.rightHand = null; xr.rightGrip = null; }
+      if (xr.leftHand === ctrl) { xr.leftHand = null; xr.leftGrip = null; }
+    };
+    c0.addEventListener("disconnected", detach(c0));
+    c1.addEventListener("disconnected", detach(c1));
+  }
+
+  function drawWristHud() {
+    if (!xr.hudCtx) return;
+    const ctx = xr.hudCtx, w = xr.hudCanvas.width, h = xr.hudCanvas.height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "rgba(8,18,30,0.85)";
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = "rgba(0,180,255,0.55)";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(2, 2, w - 4, h - 4);
+    ctx.font = "bold 22px monospace";
+    ctx.fillStyle = "#00e0ff";
+    ctx.fillText("HP", 16, 36);
+    ctx.fillText("JET", 16, 96);
+    ctx.fillText("KILL", 16, 156);
+    // HP bar
+    const hpPct = Math.max(0, Math.min(1, player.hp / 500));
+    ctx.fillStyle = "#222"; ctx.fillRect(86, 18, 220, 22);
+    ctx.fillStyle = hpPct > 0.4 ? "#36e070" : (hpPct > 0.2 ? "#e0a020" : "#e02020");
+    ctx.fillRect(86, 18, 220 * hpPct, 22);
+    // Jet bar
+    const jetPct = Math.max(0, Math.min(1, player.jetFuel / player.jetFuelMax));
+    ctx.fillStyle = "#222"; ctx.fillRect(86, 78, 220, 22);
+    ctx.fillStyle = "#ff8030";
+    ctx.fillRect(86, 78, 220 * jetPct, 22);
+    // Kills
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 28px monospace";
+    ctx.fillText(String(game.kills || 0), 96, 162);
+    xr.hudTex.needsUpdate = true;
+  }
   scene.add(new THREE.HemisphereLight(0xffc98a, 0x2a1b13, 0.62));
   const sun = new THREE.DirectionalLight(0xffb15c, 1.35);
   sun.position.set(120, 180, 30);
@@ -154,7 +256,7 @@ export async function initArena() {
   }
 
   function shootForcePush() {
-    if (!(input.pointer.locked || input.gamepad.connected || input.touch.active) || game.resp || !game.started) return;
+    if (!(input.pointer.locked || input.gamepad.connected || input.touch.active || vrMode) || game.resp || !game.started) return;
     const now = performance.now() / 1000;
     if (now < forceWeapon.can) return;
     forceWeapon.can = now + 1 / forceWeapon.rate;
@@ -268,7 +370,7 @@ export async function initArena() {
       quitOverlay.classList.remove("open");
       if (quitMenuGpNav) { quitMenuGpNav.stop(); quitMenuGpNav = null; }
       input?.setTouchVisible?.(true);
-      if (!isMobile) renderer.domElement.requestPointerLock();
+      if (!isMobile && !vrMode) renderer.domElement.requestPointerLock();
     }
   }
 
@@ -312,8 +414,13 @@ export async function initArena() {
   const wishMove = new THREE.Vector3();
 
   function wish(out) {
-    camera.getWorldDirection(fwd);
-    fwd.y = 0;
+    if (vrMode) {
+      // Move relative to rig yaw (not head), so looking around doesn't change "forward"
+      fwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+    } else {
+      camera.getWorldDirection(fwd);
+      fwd.y = 0;
+    }
     if (fwd.lengthSq() < 1e-8) fwd.set(0, 0, -1);
     fwd.normalize();
     right.crossVectors(fwd, up).normalize();
@@ -525,20 +632,35 @@ export async function initArena() {
   }
 
   function aimDir(out) {
-    out.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    if (vrMode && xr.rightHand) {
+      out.set(0, 0, -1).applyQuaternion(xr.rightHand.getWorldQuaternion(new THREE.Quaternion()));
+    } else {
+      out.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    }
     const spread = (input.pointer.aim || input.gamepad.aim || input.touch.aim) ? weapon.ads : weapon.hip;
     out.x += (Math.random() - 0.5) * spread;
     out.y += (Math.random() - 0.5) * spread;
     out.z += (Math.random() - 0.5) * spread;
     return out.normalize();
   }
+  function aimOrigin(out) {
+    if (vrMode && xr.rightHand) return xr.rightHand.getWorldPosition(out);
+    return out.copy(camera.position);
+  }
 
   function updateLaser() {
     weaponView.getMuzzleWorld(muzzle);
-    laserAimFrom.copy(camera.position);
-    laserDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
-    laserUp.copy(camera.up).applyQuaternion(camera.quaternion);
-    laserDir.addScaledVector(laserUp, -0.012).normalize();
+    if (vrMode && xr.rightHand) {
+      xr.rightHand.getWorldPosition(laserAimFrom);
+      const q = xr.rightHand.getWorldQuaternion(new THREE.Quaternion());
+      laserDir.set(0, 0, -1).applyQuaternion(q);
+    } else {
+      laserAimFrom.copy(camera.position);
+      laserDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
+      laserUp.copy(camera.up).applyQuaternion(camera.quaternion);
+      laserDir.addScaledVector(laserUp, -0.012);
+    }
+    laserDir.normalize();
     rayc.set(laserAimFrom, laserDir);
     rayc.far = weapon.range;
     const hits = rayc.intersectObjects(rayTargets, true);
@@ -559,7 +681,7 @@ export async function initArena() {
   launchSound.loop = true;
 
   function shoot() {
-    if (!(input.pointer.locked || input.gamepad.connected || input.touch.active) || game.resp || !game.started) return;
+    if (!(input.pointer.locked || input.gamepad.connected || input.touch.active || vrMode) || game.resp || !game.started) return;
     const now = performance.now() / 1000;
     if (now < weapon.can) return;
     weapon.can = now + 1 / weapon.rate;
@@ -575,7 +697,7 @@ export async function initArena() {
     spawnShell();
 
     const dir = aimDir(shootDir);
-    fromCam.copy(camera.position);
+    aimOrigin(fromCam);
     rayc.set(fromCam, dir);
     rayc.far = weapon.range;
     const hits = rayc.intersectObjects(rayTargets, true);
@@ -980,7 +1102,6 @@ export async function initArena() {
   let groundFactor = 1;
 
   function loop() {
-    requestAnimationFrame(loop);
     const t = performance.now() / 1000;
     const dt = Math.min(0.033, t - last);
     last = t;
@@ -994,13 +1115,95 @@ export async function initArena() {
       game.deathRoll = THREE.MathUtils.lerp(game.deathRoll, 0.6, Math.min(1, 4 * dt));
     }
 
-    camera.rotation.order = "YXZ";
-    camera.rotation.y = player.yaw;
-    camera.rotation.x = player.pitch;
-    camera.rotation.z = game.deathRoll;
+    if (vrMode) {
+      // In VR: head pose drives camera local rotation; rig handles yaw + position
+      xr.rig.rotation.set(0, player.yaw, 0);
+      camera.rotation.set(0, 0, 0);
+    } else {
+      camera.rotation.order = "YXZ";
+      camera.rotation.y = player.yaw;
+      camera.rotation.x = player.pitch;
+      camera.rotation.z = game.deathRoll;
+    }
 
     input.pollGamepad(dt);
     const gp = input.gamepad;
+
+    // ── XR controller polling ─────────────────────────────────────────────
+    if (vrMode && renderer.xr.isPresenting) {
+      const session = renderer.xr.getSession();
+      let leftPad = null, rightPad = null;
+      if (session) {
+        for (const src of session.inputSources) {
+          if (!src.gamepad) continue;
+          if (src.handedness === "left") leftPad = src.gamepad;
+          else if (src.handedness === "right") rightPad = src.gamepad;
+        }
+      }
+      // Movement on left stick (axes 2,3 are thumbstick on standard XR mapping)
+      if (leftPad) {
+        const lx = leftPad.axes[2] || leftPad.axes[0] || 0;
+        const ly = leftPad.axes[3] || leftPad.axes[1] || 0;
+        gp.connected = true;
+        gp.moveX = Math.abs(lx) > 0.15 ? lx : 0;
+        gp.moveY = Math.abs(ly) > 0.15 ? ly : 0;
+        // Left grip = sprint
+        gp.sprint = !!leftPad.buttons[1]?.pressed;
+      }
+      // Right stick X for snap turn; trigger for fire; A/grip for jet
+      if (rightPad) {
+        const rx = rightPad.axes[2] || rightPad.axes[0] || 0;
+        if (Math.abs(rx) > 0.7) {
+          if (xr.snapTurnArmed) {
+            player.yaw += -Math.sign(rx) * (xr.SNAP_DEG * Math.PI / 180);
+            xr.snapTurnArmed = false;
+          }
+        } else if (Math.abs(rx) < 0.3) xr.snapTurnArmed = true;
+
+        const trig = !!rightPad.buttons[0]?.pressed;
+        gp.fire = trig;
+        // Squeeze (button 1) = aim
+        gp.aim = !!rightPad.buttons[1]?.pressed;
+        // A button (button 4) = jump/jet
+        gp.jumpHeld = !!rightPad.buttons[4]?.pressed;
+        // B button (button 5) = swap weapon (edge-detected)
+        const bDown = !!rightPad.buttons[5]?.pressed;
+        if (bDown && !xr._bPrev) swapWeapon();
+        xr._bPrev = bDown;
+      }
+    }
+
+    // Gamepad aim assist — gentle magnetic pull toward nearest target in cone
+    if (!vrMode && gp.connected && otherPlayers.size > 0 && !game.resp && game.started) {
+      const cp = Math.cos(player.pitch);
+      const fwdX = -Math.sin(player.yaw) * cp;
+      const fwdY = Math.sin(player.pitch);
+      const fwdZ = -Math.cos(player.yaw) * cp;
+      let bestDot = gp.aim ? 0.95 : 0.985; // wider cone when ADS (~18° vs ~10°)
+      let bestT = null;
+      for (const [, op] of otherPlayers) {
+        if (op._hp !== undefined && op._hp <= 0) continue;
+        const dx = op._tx - player.pos.x;
+        const dy = op._ty - player.pos.y;
+        const dz = op._tz - player.pos.z;
+        const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+        if (d < 1.5 || d > 80) continue;
+        const dot = (fwdX*dx + fwdY*dy + fwdZ*dz) / d;
+        if (dot > bestDot) { bestDot = dot; bestT = { dx, dy, dz, d }; }
+      }
+      if (bestT) {
+        const hDist = Math.hypot(bestT.dx, bestT.dz);
+        const desiredYaw = Math.atan2(-bestT.dx, -bestT.dz);
+        const desiredPitch = Math.atan2(bestT.dy, hDist);
+        let yawDiff = desiredYaw - player.yaw;
+        while (yawDiff > Math.PI) yawDiff -= 2 * Math.PI;
+        while (yawDiff < -Math.PI) yawDiff += 2 * Math.PI;
+        const pitchDiff = desiredPitch - player.pitch;
+        const strength = Math.min(1, (gp.aim ? 7 : 3) * dt);
+        player.yaw += yawDiff * strength;
+        player.pitch += pitchDiff * strength;
+      }
+    }
 
     if (!menuOpen) {
 
@@ -1079,7 +1282,12 @@ export async function initArena() {
     const bx = Math.cos(bob * 0.5) * 0.02 * groundFactor;
     const camYTarget = player.pos.y + by;
     smoothCamY += (camYTarget - smoothCamY) * Math.min(1, 20 * dt);
-    camera.position.set(player.pos.x + bx, smoothCamY, player.pos.z);
+    if (vrMode) {
+      // Rig sits at the player's foot position; head pose lifts the camera the rest of the way
+      xr.rig.position.set(player.pos.x, player.pos.y - player.height, player.pos.z);
+    } else {
+      camera.position.set(player.pos.x + bx, smoothCamY, player.pos.z);
+    }
 
     // Local jetpack flame
     localFlame.visible = !!player._jetting;
@@ -1107,17 +1315,38 @@ export async function initArena() {
     const swy = (Math.cos(t * (movingForward ? 1.25 : 2)) * 0.01 + by * 0.7) * sway;
     hipOffset.set(0.41 + swx, 0.08 + swy, -0.44);
     adsOffset.set(0.24 + swx * 0.4, 0.13 + swy * 0.4, -0.3);
-    weaponView.gun.position.copy(camera.position);
-    weaponView.gun.quaternion.copy(camera.quaternion);
-    weaponView.gun.position.add((aiming ? adsOffset : hipOffset).clone().applyQuaternion(camera.quaternion));
-    weaponView.settle(dt);
 
-    const forceHipOffset = hipOffset.clone(); forceHipOffset.y -= 0.35;
-    const forceAdsOffset = adsOffset.clone(); forceAdsOffset.y -= 0.35;
-    forceGunView.gun.position.copy(camera.position);
-    forceGunView.gun.quaternion.copy(camera.quaternion);
-    forceGunView.gun.position.add((aiming ? forceAdsOffset : forceHipOffset).applyQuaternion(camera.quaternion));
-    forceGunView.settle(dt);
+    if (vrMode) {
+      // Mount weapons on the right controller (once it's available)
+      if (xr.rightHand) {
+        if (weaponView.gun.parent !== xr.rightHand) {
+          xr.rightHand.add(weaponView.gun);
+          weaponView.gun.position.set(0, -0.04, -0.10);
+          weaponView.gun.rotation.set(0, 0, 0);
+          weaponView.gun.scale.setScalar(0.7);
+        }
+        if (forceGunView.gun.parent !== xr.rightHand) {
+          xr.rightHand.add(forceGunView.gun);
+          forceGunView.gun.position.set(0, -0.04, -0.10);
+          forceGunView.gun.rotation.set(0, 0, 0);
+          forceGunView.gun.scale.setScalar(0.7);
+        }
+      }
+      weaponView.settle(dt);
+      forceGunView.settle(dt);
+    } else {
+      weaponView.gun.position.copy(camera.position);
+      weaponView.gun.quaternion.copy(camera.quaternion);
+      weaponView.gun.position.add((aiming ? adsOffset : hipOffset).clone().applyQuaternion(camera.quaternion));
+      weaponView.settle(dt);
+
+      const forceHipOffset = hipOffset.clone(); forceHipOffset.y -= 0.35;
+      const forceAdsOffset = adsOffset.clone(); forceAdsOffset.y -= 0.35;
+      forceGunView.gun.position.copy(camera.position);
+      forceGunView.gun.quaternion.copy(camera.quaternion);
+      forceGunView.gun.position.add((aiming ? forceAdsOffset : forceHipOffset).applyQuaternion(camera.quaternion));
+      forceGunView.settle(dt);
+    }
 
     laserLine.visible = activeWeapon === "smg";
     if (activeWeapon === "smg") updateLaser();
@@ -1182,8 +1411,11 @@ export async function initArena() {
     } // end if (!menuOpen)
 
     hud();
+    if (vrMode) drawWristHud();
     renderer.render(scene, camera);
   }
+
+  renderer.setAnimationLoop(loop);
 
   renderer.render(scene, camera);
   const user = await getUser();
@@ -1262,7 +1494,7 @@ export async function initArena() {
         waitingOverlay = null;
       }
       if (waitingGpNav) { waitingGpNav.stop(); waitingGpNav = null; }
-      renderer.domElement.requestPointerLock();
+      if (!vrMode) renderer.domElement.requestPointerLock();
       game.started = true;
       game.startTime = performance.now() / 1000;
       last = performance.now() / 1000;
@@ -1285,9 +1517,17 @@ export async function initArena() {
       player.hp = Math.max(0, player.hp);
       hud();
       if (player.hp <= 0) {
+        if (data.attackerSid) room.send("playerDied", { attackerSid: data.attackerSid });
         killPlayer();
         spawnGore(player.pos.clone().add(new THREE.Vector3(0, 0.9, 0)));
       }
+    });
+
+    // Kill confirmed by server
+    room.onMessage("kill", () => {
+      game.kills = (game.kills || 0) + 1;
+      hud();
+      ui.banner("KILL", 0.6);
     });
 
     // Shot tracers from other players
