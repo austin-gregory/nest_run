@@ -28,8 +28,60 @@ export async function initGame() {
   const scene = new THREE.Scene();
   const skyTex = new THREE.TextureLoader().load("./assets/sky.png");
   skyTex.colorSpace = THREE.SRGBColorSpace;
+  skyTex.mapping = THREE.EquirectangularReflectionMapping;
   scene.background = skyTex;
   scene.fog = new THREE.Fog(0x2d1f16, 26, 450);
+
+  // ── Procedural twinkling starfield (layered in front of the sky image) ──
+  const STAR_COUNT = 2200;
+  const STAR_RADIUS = 600;
+  const starGeo = new THREE.BufferGeometry();
+  const starPos = new Float32Array(STAR_COUNT * 3);
+  const starPhase = new Float32Array(STAR_COUNT);
+  const starSize = new Float32Array(STAR_COUNT);
+  for (let i = 0; i < STAR_COUNT; i++) {
+    const u = Math.random(), v = Math.random();
+    const theta = 2 * Math.PI * u;
+    const phi = Math.acos(2 * v - 1);
+    starPos[i * 3] = STAR_RADIUS * Math.sin(phi) * Math.cos(theta);
+    starPos[i * 3 + 1] = STAR_RADIUS * Math.cos(phi);
+    starPos[i * 3 + 2] = STAR_RADIUS * Math.sin(phi) * Math.sin(theta);
+    starPhase[i] = Math.random() * Math.PI * 2;
+    starSize[i] = 1.2 + Math.random() * 2.4;
+  }
+  starGeo.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
+  starGeo.setAttribute("aPhase", new THREE.BufferAttribute(starPhase, 1));
+  starGeo.setAttribute("aSize", new THREE.BufferAttribute(starSize, 1));
+  const starMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 } },
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    vertexShader: `
+      attribute float aPhase;
+      attribute float aSize;
+      uniform float uTime;
+      varying float vTwinkle;
+      void main() {
+        vTwinkle = 0.55 + 0.45 * sin(uTime * 1.6 + aPhase);
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = aSize * (300.0 / -mv.z);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: `
+      varying float vTwinkle;
+      void main() {
+        vec2 c = gl_PointCoord - 0.5;
+        float d = length(c);
+        float a = smoothstep(0.5, 0.0, d) * vTwinkle;
+        gl_FragColor = vec4(vec3(1.0, 0.97, 0.9), a);
+      }
+    `,
+  });
+  const stars = new THREE.Points(starGeo, starMat);
+  stars.frustumCulled = false;
+  scene.add(stars);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(innerWidth, innerHeight);
@@ -305,7 +357,7 @@ export async function initGame() {
   let smoothCamY = player.pos.y; // smoothed camera Y to avoid terrain jitter
   let smoothGroundY = map.gy(player.pos.x, player.pos.z); // smoothed terrain height
 
-  const game = { win: false, started: false, deaths: 0, kills: 0, resp: false, respT: 0, spawnT: 0, deathRoll: 0, elapsed: 0, startTime: 0 };
+  const game = { win: false, started: false, intro: false, lobby: true, deaths: 0, kills: 0, resp: false, respT: 0, spawnT: 0, deathRoll: 0, elapsed: 0, startTime: 0 };
   const weapon = {
     rate: 11.2,
     hip: 0.011,
@@ -374,7 +426,7 @@ export async function initGame() {
   let quitMenuGpNav = null;
 
   function toggleMenu() {
-    if (game.win) return; // don't show menu on game-over screens
+    if (game.win || game.intro || game.lobby) return; // don't show menu on game-over screens, the lobby, or the ship intro
     menuOpen = !menuOpen;
     if (menuOpen) {
       document.exitPointerLock();
@@ -522,6 +574,58 @@ export async function initGame() {
     new THREE.MeshBasicMaterial({ color: 0x33ff55 }),
     new THREE.MeshBasicMaterial({ color: 0x007a18 }),
   ];
+
+  // ── Landing dust (ship touchdown) ───────────────────────────────────────
+  const dust = [];
+  const dustGeo = new THREE.SphereGeometry(1, 8, 6);
+  const dustMats = [
+    new THREE.MeshBasicMaterial({ color: 0xc9a876, transparent: true, opacity: 0.5, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: 0xb99863, transparent: true, opacity: 0.45, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: 0xd9bd8f, transparent: true, opacity: 0.4, depthWrite: false }),
+  ];
+  function spawnDust(pos) {
+    const count = 60;
+    for (let i = 0; i < count; i++) {
+      const mat = dustMats[Math.floor(Math.random() * dustMats.length)].clone();
+      const mesh = new THREE.Mesh(dustGeo, mat);
+      const baseScale = 1.4 + Math.random() * 2.4;
+      mesh.scale.setScalar(baseScale * 0.4);
+      mesh.position.set(
+        pos.x + (Math.random() - 0.5) * 5,
+        pos.y + Math.random() * 0.8,
+        pos.z + (Math.random() - 0.5) * 5
+      );
+      scene.add(mesh);
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 2.5 + Math.random() * 7;
+      dust.push({
+        mesh,
+        baseScale,
+        baseOpacity: mat.opacity,
+        vel: new THREE.Vector3(Math.cos(angle) * speed, 1.8 + Math.random() * 2.5, Math.sin(angle) * speed),
+        life: 0,
+        maxLife: 1.8 + Math.random() * 1.6,
+      });
+    }
+  }
+  function updateDust(dt) {
+    for (let i = dust.length - 1; i >= 0; i--) {
+      const d = dust[i];
+      d.life += dt;
+      if (d.life >= d.maxLife) {
+        scene.remove(d.mesh);
+        d.mesh.material.dispose();
+        dust.splice(i, 1);
+        continue;
+      }
+      const t = d.life / d.maxLife;
+      d.vel.multiplyScalar(1 - Math.min(1, 3.2 * dt));
+      d.vel.y -= 1.2 * dt;
+      d.mesh.position.addScaledVector(d.vel, dt);
+      d.mesh.scale.setScalar(d.baseScale * (0.4 + t * 1.6));
+      d.mesh.material.opacity = d.baseOpacity * (1 - t);
+    }
+  }
 
   // Acid bug mouth particles — subtle green wisps
   const ACID_PARTICLE_COUNT = 5;
@@ -941,6 +1045,27 @@ export async function initGame() {
   {
     const { gltfLoader } = await import("./gltfLoader.js");
     trapGLTF = await gltfLoader.loadAsync("./assets/trap.glb");
+    setLoading(92, 'Loading dropship interior...');
+  }
+
+  // Pre-load ship interior — rendered as the pre-game lobby backdrop
+  // (waiting-for-players / start-solo screen) while the world sits behind it.
+  let interiorShip = null;
+  {
+    const { gltfLoader } = await import("./gltfLoader.js");
+    const interiorGltf = await gltfLoader.loadAsync("./assets/inside_dropship.glb");
+    interiorShip = interiorGltf.scene;
+    interiorShip.scale.setScalar(WORLD.LOBBY_SCALE);
+    interiorShip.rotation.y = WORLD.LOBBY_YAW;
+    interiorShip.position.set(WORLD.LOBBY_X, WORLD.LOBBY_Y, WORLD.LOBBY_Z);
+    scene.add(interiorShip);
+    // Cabin lights — scoped to the lobby by falloff distance so they never reach the
+    // exterior game world (~900 units away, near y=0).
+    for (const dz of [-7, 0, 7]) {
+      const cabinLight = new THREE.PointLight(0xfff2d9, 90, 35, 2);
+      cabinLight.position.set(WORLD.LOBBY_X, WORLD.LOBBY_Y + 3, WORLD.LOBBY_Z + dz);
+      scene.add(cabinLight);
+    }
     setLoading(100, 'Connecting...');
   }
 
@@ -2201,11 +2326,147 @@ export async function initGame() {
   let lastDt = 0.016;
   let bob = 0;
   let groundFactor = 1; // smoothed 0..1 ground vs air for bob blending
+
+  // ── Pre-game lobby (inside the drop ship, shown while waiting/before start) ──
+  weaponView.gun.visible = false;
+  const lobbyCamPos = new THREE.Vector3(WORLD.LOBBY_X, WORLD.LOBBY_Y + WORLD.LOBBY_CAM_EYE_HEIGHT, WORLD.LOBBY_Z);
+  let lobbyT = 0;
+  function updateLobbyView(dt) {
+    lobbyT += dt;
+    camera.rotation.order = "YXZ";
+    camera.position.copy(lobbyCamPos);
+    camera.rotation.y = WORLD.LOBBY_YAW + Math.sin(lobbyT * 0.18) * 0.35;
+    camera.rotation.x = Math.sin(lobbyT * 0.12) * 0.06;
+    camera.rotation.z = 0;
+  }
+
+  // ── Drop ship intro cutscene (descend → hold → jump out) ───────────────
+  const shipRestY = map.ship ? map.ship.position.y : 0;
+  const shipIntro = { phase: "descend", t: 0, pendingBanner: null, fromPos: new THREE.Vector3(), fromYaw: 0, fromPitch: 0 };
+  const easeOutCubic = (x) => 1 - Math.pow(1 - x, 3);
+  const easeInOutCubic = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+  const lerpAngle = (a, b, t) => {
+    const diff = Math.atan2(Math.sin(b - a), Math.cos(b - a));
+    return a + diff * t;
+  };
+  // Fixed 3rd-person spectator position that watches the whole ship descend.
+  const shipCamX = WORLD.SHIP_X + WORLD.SHIP_INTRO_CAM_OFFSET_X;
+  const shipCamY = shipRestY + WORLD.SHIP_INTRO_CAM_OFFSET_Y;
+  const shipCamZ = WORLD.SHIP_Z + WORLD.SHIP_INTRO_CAM_OFFSET_Z;
+  const shipLookTarget = new THREE.Vector3();
+
+  function skipShipIntro() {
+    if (game.intro) finishShipIntro();
+  }
+
+  function startShipIntro(bannerText, bannerDur) {
+    game.lobby = false;
+    if (!map.ship) {
+      // No ship model loaded — fall back to an instant start.
+      game.started = true;
+      ui.banner(bannerText, bannerDur);
+      game.startTime = performance.now() / 1000;
+      last = performance.now() / 1000;
+      return;
+    }
+    game.intro = true;
+    game.started = false;
+    shipIntro.phase = "descend";
+    shipIntro.t = 0;
+    shipIntro.pendingBanner = { text: bannerText, dur: bannerDur };
+    map.ship.position.y = shipRestY + WORLD.SHIP_INTRO_SKY_HEIGHT;
+    weaponView.gun.visible = false;
+    forceGunView.gun.visible = false;
+    camera.rotation.order = "YXZ";
+    if (!isMobile && !vrMode) renderer.domElement.requestPointerLock();
+    addEventListener("keydown", skipShipIntro);
+    addEventListener("mousedown", skipShipIntro);
+    addEventListener("touchstart", skipShipIntro);
+  }
+
+  function finishShipIntro() {
+    game.intro = false;
+    map.ship.position.y = shipRestY;
+    removeEventListener("keydown", skipShipIntro);
+    removeEventListener("mousedown", skipShipIntro);
+    removeEventListener("touchstart", skipShipIntro);
+    player.yaw = WORLD.SPAWN_YAW;
+    player.pitch = 0;
+    smoothCamY = player.pos.y;
+    if (activeWeapon === "force") forceGunView.gun.visible = true;
+    else weaponView.gun.visible = true;
+    game.started = true;
+    game.startTime = performance.now() / 1000;
+    last = performance.now() / 1000;
+    if (shipIntro.pendingBanner) {
+      ui.banner(shipIntro.pendingBanner.text, shipIntro.pendingBanner.dur);
+      shipIntro.pendingBanner = null;
+    }
+  }
+
+  function updateShipIntro(dt) {
+    shipIntro.t += dt;
+    if (shipIntro.phase === "descend") {
+      const p = Math.min(1, shipIntro.t / WORLD.SHIP_INTRO_DESCEND);
+      const e = easeOutCubic(p);
+      map.ship.position.y = shipRestY + WORLD.SHIP_INTRO_SKY_HEIGHT * (1 - e);
+      camera.position.set(shipCamX, shipCamY, shipCamZ);
+      shipLookTarget.set(WORLD.SHIP_X, map.ship.position.y, WORLD.SHIP_Z);
+      camera.lookAt(shipLookTarget);
+      if (p >= 1) {
+        shipIntro.phase = "hold";
+        shipIntro.t = 0;
+        spawnDust(new THREE.Vector3(WORLD.SHIP_X, map.gy(WORLD.SHIP_X, WORLD.SHIP_Z), WORLD.SHIP_Z));
+      }
+    } else if (shipIntro.phase === "hold") {
+      map.ship.position.y = shipRestY;
+      camera.position.set(shipCamX, shipCamY, shipCamZ);
+      shipLookTarget.set(WORLD.SHIP_X, shipRestY, WORLD.SHIP_Z);
+      camera.lookAt(shipLookTarget);
+      if (shipIntro.t >= WORLD.SHIP_INTRO_HOLD) {
+        shipIntro.phase = "jump";
+        shipIntro.t = 0;
+        shipIntro.fromPos.copy(camera.position);
+        shipIntro.fromYaw = camera.rotation.y;
+        shipIntro.fromPitch = camera.rotation.x;
+      }
+    } else if (shipIntro.phase === "jump") {
+      const p = Math.min(1, shipIntro.t / WORLD.SHIP_INTRO_JUMP);
+      const e = easeInOutCubic(p);
+      const hop = Math.sin(p * Math.PI) * 1.4;
+      camera.position.set(
+        THREE.MathUtils.lerp(shipIntro.fromPos.x, player.pos.x, e),
+        THREE.MathUtils.lerp(shipIntro.fromPos.y, player.pos.y, e) + hop,
+        THREE.MathUtils.lerp(shipIntro.fromPos.z, player.pos.z, e)
+      );
+      camera.rotation.y = lerpAngle(shipIntro.fromYaw, WORLD.SPAWN_YAW, e);
+      camera.rotation.x = THREE.MathUtils.lerp(shipIntro.fromPitch, 0, e);
+      if (p >= 1) finishShipIntro();
+    }
+  }
+
   function loop() {
     const t = performance.now() / 1000;
     const dt = Math.min(0.033, t - last);
     last = t;
     lastDt = dt;
+
+    updateDust(dt);
+    stars.position.copy(camera.position);
+    starMat.uniforms.uTime.value = t;
+
+    if (game.lobby) {
+      updateLobbyView(dt);
+      renderer.render(scene, camera);
+      return;
+    }
+
+    if (game.intro) {
+      updateShipIntro(dt);
+      if (vrMode) drawWristHud();
+      renderer.render(scene, camera);
+      return;
+    }
 
     if (!game.win) game.elapsed = t - game.startTime;
 
@@ -2391,6 +2652,7 @@ export async function initGame() {
     } else {
       camera.position.set(player.pos.x + bx, smoothCamY, player.pos.z);
     }
+    ui.setCoord(player.pos.x, player.pos.z);
 
     veil.style.opacity = game.resp ? (game.respT / 3) * 0.55 : 0;
 
@@ -2626,19 +2888,17 @@ export async function initGame() {
         waitingOverlay = null;
       }
       if (waitingGpNav) { waitingGpNav.stop(); waitingGpNav = null; }
-      if (!vrMode) renderer.domElement.requestPointerLock();
+      let bannerText;
       if (data.mode === "singleplayer") {
         isMultiplayer = false;
-        ui.banner("SOLO MODE — ESCORT THE CAR TO THE NEST", 2.5);
+        bannerText = "SOLO MODE — ESCORT THE CAR TO THE NEST";
       } else if (data.mode === "coop") {
         isCoopMode = true;
-        ui.banner("CO-OP MODE — ESCORT THE CAR TO THE NEST", 2.5);
+        bannerText = "CO-OP MODE — ESCORT THE CAR TO THE NEST";
       } else {
-        ui.banner("COMMANDER HAS JOINED - GAME ON!", 2.5);
+        bannerText = "COMMANDER HAS JOINED - GAME ON!";
       }
-      game.started = true;
-      game.startTime = performance.now() / 1000;
-      last = performance.now() / 1000;
+      startShipIntro(bannerText, 2.5);
     });
 
     // Listen for enemy spawn commands from RTS player
@@ -2867,6 +3127,7 @@ export async function initGame() {
         document.body.removeChild(waitingOverlay);
         waitingOverlay = null;
       }
+      game.lobby = false;
       game.started = true;
       game.startTime = performance.now() / 1000;
       last = performance.now() / 1000;
@@ -2883,10 +3144,7 @@ export async function initGame() {
 
   // If singleplayer (no connection), start immediately
   if (!isMultiplayer) {
-    game.started = true;
-    ui.banner("ESCORT THE CAR TO THE NEST", 2);
-    game.startTime = performance.now() / 1000;
-    last = performance.now() / 1000;
+    startShipIntro("ESCORT THE CAR TO THE NEST", 2);
   }
 
   loop();
