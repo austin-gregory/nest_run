@@ -352,6 +352,23 @@ export async function createWorld(scene) {
     car.add(bomb);
   }
 
+  // ── Drop ship (parked at spawn) ─────────────────────────────────────
+  let ship = null;
+  {
+    const { gltfLoader } = await import("./gltfLoader.js");
+    const shipGltf = await gltfLoader.loadAsync("./assets/drop_ship.glb");
+    ship = shipGltf.scene;
+    ship.scale.setScalar(WORLD.SHIP_SCALE);
+    ship.rotation.y = WORLD.SHIP_YAW;
+    ship.updateMatrixWorld(true);
+    // Model's pivot isn't at its base — measure the bbox and lift so the hull rests on the ground.
+    const shipBox = new THREE.Box3().setFromObject(ship);
+    const shipLift = -shipBox.min.y;
+    put(ship, WORLD.SHIP_X, WORLD.SHIP_Z, shipLift);
+    world.add(ship);
+    addCollider(ship);
+  }
+
   const cart = { p: 0, fwd: 7.5, back: 2.0, rad: 8.2 };
   const setCar = () => {
     const pt = getTrackPoint(cart.p);
@@ -377,5 +394,6 @@ export async function createWorld(scene) {
     nearestTrackProgress,
     eggSacMeshes,
     eggSacPositions,
+    ship,
   };
 }

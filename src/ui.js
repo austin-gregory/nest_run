@@ -17,6 +17,7 @@ export function createUI() {
     optic: $("optic"),
     jet: $("jet"),
     jetb: $("jetb"),
+    coord: $("coord"),
   };
 
   function msg(text) {
@@ -34,6 +35,10 @@ export function createUI() {
 
   function setStatus(text) {
     refs.st.textContent = text;
+  }
+
+  function setCoord(x, z) {
+    if (refs.coord) refs.coord.textContent = "X: " + x.toFixed(1) + "   Z: " + z.toFixed(1);
   }
 
   function setCrosshairAim(isAim, hidden) {
@@ -73,5 +78,5 @@ export function createUI() {
     refs.pric.style.left = prPct + "%";
   }
 
-  return { refs, msg, banner, setStatus, setCrosshairAim, hud };
+  return { refs, msg, banner, setStatus, setCrosshairAim, setCoord, hud };
 }

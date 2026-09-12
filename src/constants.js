@@ -12,17 +12,37 @@ export const WORLD = {
   ],
   NEST_X: -120,
   NEST_Z: -180,
-  SPAWN_X: -120,
-  SPAWN_Z: 180,
+  SPAWN_X: -86.6,
+  SPAWN_Z: 145,
   SPAWN_YAW: 0,
   SPAWN_SAFE_RADIUS: 9,
   SPAWN_POINTS: [
-    { x: -123.5, z: 180, yaw: 0 },
-    { x: -116.5, z: 180, yaw: 0 },
-    { x: -123.5, z: 186, yaw: 0 },
-    { x: -116.5, z: 186, yaw: 0 },
+    { x: -90.1, z: 145, yaw: 0 },
+    { x: -83.1, z: 145, yaw: 0 },
+    { x: -90.1, z: 139, yaw: 0 },
+    { x: -83.1, z: 139, yaw: 0 },
   ],
   FPS_COLORS: [0x00cc44, 0x2288ff, 0xddcc00, 0xff8800],
+  SHIP_X: -86.6,
+  SHIP_Z: 160,
+  SHIP_YAW: 0,
+  SHIP_SCALE: 11,
+  SHIP_INTRO_SKY_HEIGHT: 200,
+  SHIP_INTRO_DESCEND: 5.5,
+  SHIP_INTRO_HOLD: 0.8,
+  SHIP_INTRO_JUMP: 1.6,
+  // Fixed 3rd-person spectator camera (offset from the ship's resting position) that watches it land.
+  SHIP_INTRO_CAM_OFFSET_X: 34,
+  SHIP_INTRO_CAM_OFFSET_Y: 16,
+  SHIP_INTRO_CAM_OFFSET_Z: 22,
+  // Interior lobby scene, shown while waiting for players / before "Start Solo".
+  // Parked far above the play area so it never overlaps real terrain/gameplay.
+  LOBBY_X: 0,
+  LOBBY_Y: 900,
+  LOBBY_Z: 0,
+  LOBBY_SCALE: 11,
+  LOBBY_YAW: 0,
+  LOBBY_CAM_EYE_HEIGHT: 1.7,
 };
 
 export const ASSETS = {
