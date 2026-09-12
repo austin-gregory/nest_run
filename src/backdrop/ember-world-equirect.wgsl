@@ -26,10 +26,17 @@ const PLANET_DIR: vec3f = vec3f(0.34, 0.45, 0.93);
 const PLANET_DIST: f32 = 10.0;
 const PLANET_RADIUS: f32 = 2.2;
 
-// Small cold moon on the opposite side for depth.
-const MOON_DIR: vec3f = vec3f(-0.72, 0.33, -0.61);
+// Two cold moons, well up in the sky so terrain and the HUD don't clip them.
+// y sets elevation: 0.33 put the first at ~19 degrees, 0.66 lifts it to ~35.
+const MOON_DIR: vec3f = vec3f(-0.72, 0.66, -0.61);
 const MOON_DIST: f32 = 15.0;
 const MOON_RADIUS: f32 = 0.85;
+
+// Second moon, higher again (~48 degrees) and nearer, so the pair reads as
+// two bodies at different distances rather than a mirrored copy.
+const MOON2_DIR: vec3f = vec3f(0.55, 0.75, -0.38);
+const MOON2_DIST: f32 = 11.0;
+const MOON2_RADIUS: f32 = 0.52;
 
 const SUN_DIR: vec3f = vec3f(-0.45, 0.22, 0.86);
 
@@ -169,10 +176,10 @@ fn shadeMolten(hitPoint: vec3f, centre: vec3f) -> vec3f {
   return surface;
 }
 
-fn shadeMoon(hitPoint: vec3f, centre: vec3f) -> vec3f {
+fn shadeMoon(hitPoint: vec3f, centre: vec3f, tint: vec3f, craterScale: f32) -> vec3f {
   let normal = normalize(hitPoint - centre);
-  let craters = fbm3(normal * 7.0, 4);
-  let base = mix(vec3f(0.075, 0.070, 0.068), vec3f(0.16, 0.15, 0.14), craters);
+  let craters = fbm3(normal * craterScale, 4);
+  let base = mix(tint * 0.46, tint, craters);
   let lambert = max(0.0, dot(normal, normalize(SUN_DIR)));
   // Warm bounce from the molten world on the shadowed side.
   let bounce = vec3f(0.09, 0.035, 0.014) * max(0.0, dot(normal, normalize(PLANET_DIR)));
@@ -192,10 +199,18 @@ fn shadeMoon(hitPoint: vec3f, centre: vec3f) -> vec3f {
 
   let planetCentre = normalize(PLANET_DIR) * PLANET_DIST;
   let moonCentre = normalize(MOON_DIR) * MOON_DIST;
+  let moon2Centre = normalize(MOON2_DIR) * MOON2_DIST;
 
+  // Far moon first, then the nearer one, then the planet in front of both.
   let tMoon = raySphere(dir, moonCentre, MOON_RADIUS);
   if (tMoon > 0.0) {
-    color = shadeMoon(dir * tMoon, moonCentre);
+    color = shadeMoon(dir * tMoon, moonCentre, vec3f(0.16, 0.15, 0.14), 7.0);
+  }
+
+  let tMoon2 = raySphere(dir, moon2Centre, MOON2_RADIUS);
+  if (tMoon2 > 0.0) {
+    // Cooler and slightly brighter, with coarser cratering.
+    color = shadeMoon(dir * tMoon2, moon2Centre, vec3f(0.185, 0.190, 0.205), 4.5);
   }
 
   let tPlanet = raySphere(dir, planetCentre, PLANET_RADIUS);

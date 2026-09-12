@@ -8,7 +8,7 @@ import { createWeaponView } from "./weaponView.js";
 import { createArenaRoom, joinArenaRoom } from "./network.js";
 import { getUser, getDisplayName, getCachedCustomization } from "./supabase.js";
 import { createBackdrop, isBackdropSupported } from "./backdrop.js";
-import { createSkyCycle, skyFrames } from "./skyCycle.js";
+import { createFovSetting } from "./fovSetting.js";
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -28,18 +28,17 @@ export async function initArena() {
   const ui = createUI();
 
   const scene = new THREE.Scene();
-  // Arena's sky is baked from the WebGPU black hole shaders (tools/bake-frames.mjs)
-  // into a crossfading sequence, so the accretion disk churns without needing
-  // WebGPU at runtime — Chromium hands out no adapter when Vulkan is disabled,
-  // which is common on Linux.
-  const sky = createSkyCycle(scene, {
-    frames: skyFrames("./assets/blackhole-sky", 6),
-    radius: 450,          // inside the camera's 600 far plane
-    // Barely any hold: the disk's motion is subtle, so it needs to be moving
-    // continuously rather than settling between fades.
-    hold: 0.3,
-    fade: 4.0,
-  });
+  // Baked from src/backdrop/black-hole-equirect.wgsl (tools/bake-frames.mjs),
+  // so no WebGPU is needed at runtime — Chromium hands out no adapter when
+  // Vulkan is disabled, which is common on Linux.
+  //
+  // Deliberately a single still frame. The disk's brightness is fixed by
+  // Doppler beaming and radial falloff, so only its internal turbulence can
+  // move; a crossfading sequence still read as static and cost 6 textures.
+  const skyTex = new THREE.TextureLoader().load("./assets/blackhole-sky.png");
+  skyTex.colorSpace = THREE.SRGBColorSpace;
+  skyTex.mapping = THREE.EquirectangularReflectionMapping;
+  scene.background = skyTex;
   scene.fog = new THREE.Fog(0x05070a, 40, 260);
 
   // ── Procedural twinkling starfield (layered in front of the sky image) ──
@@ -118,7 +117,7 @@ export async function initArena() {
     backdrop.ready.then((ok) => {
       if (!ok) { backdrop = null; return; }
       renderer.setClearColor(0x000000, 0);
-      sky.mesh.visible = false;     // the live shader draws its own sky and stars
+      scene.background = null;      // the live shader draws its own sky and stars
       stars.visible = false;
     });
   }
@@ -461,6 +460,11 @@ export async function initArena() {
   const menuBtnEl = document.getElementById("menu-btn");
   let menuOpen = false;
   let quitMenuGpNav = null;
+
+  // FOV slider lives in the pause menu; the render loop reads it every frame so
+  // dragging it updates the view live rather than on resume.
+  const fovSetting = createFovSetting(quitOverlay);
+  quitOverlay.insertBefore(fovSetting.row, resumeBtn);
 
   function toggleMenu() {
     if (game.win) return;
@@ -1215,7 +1219,6 @@ export async function initArena() {
     last = t;
     lastDt = dt;
 
-    sky.update(dt, camera);
     camera.getWorldPosition(stars.position);
     stars.rotation.y += STAR_SPIN * dt;
     starMat.uniforms.uTime.value = t;
@@ -1422,7 +1425,7 @@ export async function initArena() {
     veil.style.opacity = game.resp ? (game.respT / 3) * 0.55 : 0;
 
     const aiming = input.pointer.aim || gp.aim || input.touch.aim;
-    const fov = aiming ? 30 : sprint ? 100 : 94;
+    const fov = fovSetting.forState({ aiming, sprinting: sprint });
     camera.fov = THREE.MathUtils.damp(camera.fov, fov, 12, dt);
     camera.updateProjectionMatrix();
     ui.setCrosshairAim(aiming, false);

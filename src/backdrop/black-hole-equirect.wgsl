@@ -11,6 +11,15 @@ const HORIZON: f32 = 1.0;
 const ISCO: f32 = 3.0;
 const DISK_OUTER: f32 = 9.5;
 
+// Two cold moons, placed high so they sit well above the disk. They are tested
+// against the ray's ESCAPE direction, after the geodesic has bent it, so the
+// hole lenses them exactly as it lenses the starfield — near the shadow they
+// smear and duplicate rather than sitting flat on top of the image.
+const MOON_DIR: vec3f = vec3f(-0.58, 0.72, -0.38);
+const MOON_ANG: f32 = 0.072;          // angular radius, radians
+const MOON2_DIR: vec3f = vec3f(0.66, 0.60, 0.45);
+const MOON2_ANG: f32 = 0.042;
+
 fn hash21(p: vec2f) -> f32 {
   var q = fract(p * vec2f(123.34, 456.21));
   q += vec2f(dot(q, q + vec2f(45.32)));
@@ -42,6 +51,34 @@ fn geodesicAcceleration(position: vec3f, velocity: vec3f) -> vec3f {
   let angularMomentum = cross(position, velocity);
   let h2 = dot(angularMomentum, angularMomentum);
   return -1.5 * h2 * position / (r2 * r2 * sqrt(r2));
+}
+
+// A lit sphere seen at infinity: `ang` is its angular radius, so the disc edge
+// is a smoothstep on the angle between the ray and the moon's direction.
+fn moonDisc(rayDir: vec3f, moonDir: vec3f, ang: f32, tint: vec3f) -> vec3f {
+  let d = normalize(moonDir);
+  let cosA = dot(normalize(rayDir), d);
+  let theta = acos(clamp(cosA, -1.0, 1.0));
+  if (theta > ang) { return vec3f(0.0); }
+
+  // Position within the disc, used to fake a lit sphere's shading.
+  let r = theta / ang;
+  let z = sqrt(max(0.0, 1.0 - r * r));          // height on the sphere
+  let up = normalize(cross(d, vec3f(0.0, 1.0, 0.0)) + vec3f(1e-4));
+  let side = normalize(cross(up, d));
+  let offset = normalize(rayDir - d * cosA + vec3f(1e-6));
+  let nx = dot(offset, side) * r;
+  let ny = dot(offset, up) * r;
+  // -d, not +d: the face we can see points back toward the viewer. With +d the
+  // whole disc computed as facing away, so every moon rendered flat ambient.
+  let normal = normalize(-d * z + side * nx + up * ny);
+
+  // Lit from the side so there is a visible terminator rather than a flat disc.
+  let lightDir = normalize(-d * 0.30 + side * 0.90 + up * 0.30);
+  let lambert = max(0.0, dot(normal, lightDir));
+  let craters = 0.72 + 0.28 * noise(vec2f(nx, ny) * 9.0);
+  let edge = smoothstep(1.0, 0.965, r);          // soften the limb
+  return tint * craters * (0.10 + 0.90 * lambert) * edge;
 }
 
 fn starField(direction: vec3f) -> vec3f {
@@ -190,7 +227,11 @@ fn volumeSample(point: vec3f, rayVelocity: vec3f) -> vec4f {
     }
   }
 
-  if (escaped) { accumulated += starField(velocity) * transmittance; }
+  if (escaped) {
+    accumulated += starField(velocity) * transmittance;
+    accumulated += moonDisc(velocity, MOON_DIR, MOON_ANG, vec3f(0.62, 0.63, 0.70)) * transmittance;
+    accumulated += moonDisc(velocity, MOON2_DIR, MOON2_ANG, vec3f(0.52, 0.47, 0.43)) * transmittance;
+  }
 
   // Linear HDR output; tone mapping and bloom happen in the post pipeline.
   return vec4f(accumulated, 1.0);

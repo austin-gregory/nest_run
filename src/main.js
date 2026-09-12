@@ -9,6 +9,7 @@ import { connectToGame, createRoom, joinRoom } from "./network.js";
 import { recordGame, getUser, getDisplayName, getCachedCustomization } from "./supabase.js";
 import { createCoopBot, tickCoopBot, killCoopBot } from "./coopBot.js";
 import { createSkyCycle, skyFrames } from "./skyCycle.js";
+import { createFovSetting } from "./fovSetting.js";
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -453,6 +454,11 @@ export async function initGame() {
   const menuBtn = document.getElementById("menu-btn");
   let menuOpen = false;
   let quitMenuGpNav = null;
+
+  // FOV slider lives in the pause menu; the render loop reads it every frame so
+  // dragging it updates the view live rather than on resume.
+  const fovSetting = createFovSetting(quitOverlay);
+  quitOverlay.insertBefore(fovSetting.row, resumeBtn);
 
   function toggleMenu() {
     if (game.win || game.intro || game.lobby) return; // don't show menu on game-over screens, the lobby, or the ship intro
@@ -2879,7 +2885,7 @@ export async function initGame() {
     veil.style.opacity = game.resp ? (game.respT / 3) * 0.55 : 0;
 
     const aiming = input.pointer.aim || gp.aim || input.touch.aim;
-    const fov = aiming ? 30 : sprint ? 100 : 94;
+    const fov = fovSetting.forState({ aiming, sprinting: sprint });
     camera.fov = THREE.MathUtils.damp(camera.fov, fov, 12, dt);
     camera.updateProjectionMatrix();
     ui.setCrosshairAim(aiming, trapActive);
