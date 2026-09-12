@@ -7,6 +7,7 @@ import { createWorld } from "./world.js";
 import { createWeaponView } from "./weaponView.js";
 import { connectToGame, createRoom, joinRoom } from "./network.js";
 import { recordGame, getUser, getDisplayName, getCachedCustomization } from "./supabase.js";
+import { createCoopBot, tickCoopBot, killCoopBot } from "./coopBot.js";
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -1314,6 +1315,100 @@ export async function initGame() {
   let isEnemyHost = true; // am I the AI-host for enemies?
   let isCoopMode = false; // coop = multiple shooters, no commander
 
+  // ── Co-op bots ─────────────────────────────────────────────────────────
+  // Only the server-elected host simulates them; everyone else just sees them
+  // as ordinary FPS players via syncOtherPlayers().
+  const coopBots = new Map();   // sid -> bot instance
+  let botHostSid = null;
+  let amBotHost = false;
+  const _botShotFrom = new THREE.Vector3();
+  const _botShotTo = new THREE.Vector3();
+
+  function syncBotRoster() {
+    if (!room || !room.state) return;
+    const live = new Set();
+    room.state.players.forEach((p, sid) => {
+      if (!sid.startsWith("bot-")) return;
+      live.add(sid);
+      if (!coopBots.has(sid)) {
+        const index = parseInt(sid.slice(4), 10) || 0;
+        coopBots.set(sid, createCoopBot(index));
+      }
+    });
+    for (const sid of [...coopBots.keys()]) {
+      if (!live.has(sid)) coopBots.delete(sid);
+    }
+  }
+
+  function botTick(dt) {
+    if (!amBotHost || coopBots.size === 0 || !game.started || game.win) return;
+    syncBotRoster();
+
+    // Bugs the bots can see, as plain records the AI can read and damage.
+    const enemyViews = [];
+    const enemyBySource = new Map();
+    for (const en of enemies) {
+      if (en._destroyed) continue;
+      const v = {
+        id: en.networkId || null,
+        x: en.mesh.position.x, y: en.mesh.position.y, z: en.mesh.position.z,
+        hp: en.hp, alive: true, dormant: !!en.dormant,
+      };
+      enemyViews.push(v);
+      enemyBySource.set(v, en);
+    }
+
+    const allies = [{ x: player.pos.x, z: player.pos.z }];
+    for (const b of coopBots.values()) allies.push({ x: b.x, z: b.z });
+
+    const ctx = {
+      map,
+      enemies: enemyViews,
+      allies,
+      onShoot: (bot, tgt, hit) => {
+        _botShotFrom.set(bot.x, bot.y - 0.15, bot.z);
+        _botShotTo.set(tgt.x, tgt.y + 0.6, tgt.z);
+        if (!hit) {
+          _botShotTo.x += (Math.random() - 0.5) * 2.5;
+          _botShotTo.y += (Math.random() - 0.5) * 2.5;
+          _botShotTo.z += (Math.random() - 0.5) * 2.5;
+        }
+        spawnTracer(_botShotFrom.clone(), _botShotTo.clone());
+        if (room && isMultiplayer) {
+          room.send("botShot", {
+            fx: _botShotFrom.x, fy: _botShotFrom.y, fz: _botShotFrom.z,
+            tx: _botShotTo.x, ty: _botShotTo.y, tz: _botShotTo.z,
+          });
+        }
+      },
+      onKill: (bot, tgt) => {
+        const en = enemyBySource.get(tgt);
+        if (en) destroyEnemy(en, false);
+      },
+    };
+
+    for (const bot of coopBots.values()) {
+      tickCoopBot(bot, dt, ctx);
+      // Drive the visible model directly so the host doesn't wait on the
+      // server round-trip to see its own bots move.
+      const op = otherPlayers.get(bot.sid);
+      if (op) {
+        op._tx = bot.x; op._ty = bot.y; op._tz = bot.z;
+        op._tyaw = bot.yaw; op._tpitch = bot.pitch;
+        op._ground = bot.ground; op._hp = bot.hp;
+      }
+    }
+
+    // Bots damaged the view records; write the survivors back onto the bugs.
+    for (const v of enemyViews) {
+      const en = enemyBySource.get(v);
+      if (en && !en._destroyed && en.hp !== v.hp) {
+        en.hp = v.hp;
+        en.flash = 0.1;
+      }
+    }
+  }
+
   function updateHostStatus() {
     // Lowest colorIndex among connected FPS players is the host
     if (!room || !room.state) { isEnemyHost = true; return; }
@@ -1480,12 +1575,20 @@ export async function initGame() {
     en.hp -= ePart === "head" ? weapon.dmg * 1.55 : weapon.dmg;
     en.flash = 0.1;
     if (en.hp > 0) return;
+    destroyEnemy(en, true);
+  }
+
+  // Tear down a dead bug and report it. `creditPlayer` is false for bot kills so
+  // they don't inflate the local player's score.
+  function destroyEnemy(en, creditPlayer) {
+    if (!en || en._destroyed) return;
+    en._destroyed = true;
 
     const bi = targets.indexOf(en.bodyProxy);
     if (bi >= 0) targets.splice(bi, 1);
     const hi = targets.indexOf(en.headProxy);
     if (hi >= 0) targets.splice(hi, 1);
-    game.kills++;
+    if (creditPlayer) game.kills++;
     en.mixer.stopAllAction();
     const gorePos = en.mesh.position.clone();
     gorePos.y += BUG_SCALE * 0.55;
@@ -1503,7 +1606,8 @@ export async function initGame() {
       spawnGore(gorePos);
     }
     map.world.remove(en.mesh);
-    enemies.splice(enemies.indexOf(en), 1);
+    const idx = enemies.indexOf(en);
+    if (idx >= 0) enemies.splice(idx, 1);
     rebuildRayTargets();
     hud();
 
@@ -2032,6 +2136,18 @@ export async function initGame() {
       ground: player.ground,
       cartProgress: map.cart.p,
     });
+
+    // Only the bot host publishes bot transforms
+    if (amBotHost && coopBots.size > 0) {
+      const bots = [];
+      for (const b of coopBots.values()) {
+        bots.push({
+          sid: b.sid, x: b.x, y: b.y, z: b.z,
+          yaw: b.yaw, pitch: b.pitch, hp: b.hp, ground: b.ground,
+        });
+      }
+      room.send("botUpdate", bots);
+    }
 
     // Only the enemy host sends positions (authoritative AI)
     if (isEnemyHost && enemies.length > 0) {
@@ -2657,6 +2773,7 @@ export async function initGame() {
     spawnTick(dt);
     aiCommanderTick(dt, t);
     aiTick(dt, t);
+    botTick(dt);
     networkTick(dt);
     lerpOtherPlayers(dt);
 
@@ -2837,6 +2954,8 @@ export async function initGame() {
     }
     isMultiplayer = true;
     mySessionId = room.sessionId;
+    // A botHost message can land before this assignment, so re-resolve it here.
+    amBotHost = !!(botHostSid && botHostSid === mySessionId);
     console.log("[network] Connected as FPS player, sessionId:", mySessionId);
 
     // Show waiting overlay with start buttons
@@ -3057,6 +3176,20 @@ export async function initGame() {
     });
 
     // If we got assigned as RTS by mistake, redirect
+    room.onMessage("botHost", (data) => {
+      botHostSid = data && data.sid ? data.sid : null;
+      amBotHost = !!(mySessionId && botHostSid === mySessionId);
+      syncBotRoster();
+    });
+
+    room.onMessage("botShot", (data) => {
+      if (!data) return;
+      spawnTracer(
+        new THREE.Vector3(data.fx, data.fy, data.fz),
+        new THREE.Vector3(data.tx, data.ty, data.tz)
+      );
+    });
+
     room.onMessage("roleAssign", (data) => {
       if (data.role === "rts") {
         console.log("[network] Assigned RTS role, redirecting...");
