@@ -8,6 +8,7 @@ import { createWeaponView } from "./weaponView.js";
 import { connectToGame, createRoom, joinRoom } from "./network.js";
 import { recordGame, getUser, getDisplayName, getCachedCustomization } from "./supabase.js";
 import { createCoopBot, tickCoopBot, killCoopBot } from "./coopBot.js";
+import { createSkyCycle, skyFrames } from "./skyCycle.js";
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -27,14 +28,17 @@ export async function initGame() {
   const ui = createUI();
 
   const scene = new THREE.Scene();
-  // Baked from src/backdrop/ember-world-equirect.wgsl via tools/bake-backdrop.mjs:
-  // a molten world and a cold moon over warm dust. Baked rather than rendered
-  // live because Chromium hands out no WebGPU adapter when Vulkan is disabled.
-  // Palette deliberately sits with the 0x2d1f16 fog rather than fighting it.
-  const skyTex = new THREE.TextureLoader().load("./assets/ember-sky.png");
-  skyTex.colorSpace = THREE.SRGBColorSpace;
-  skyTex.mapping = THREE.EquirectangularReflectionMapping;
-  scene.background = skyTex;
+  // Baked from src/backdrop/ember-world-equirect.wgsl (tools/bake-frames.mjs):
+  // a molten world and a cold moon over warm dust, played as a crossfading
+  // sequence so the lava creeps. Baked rather than rendered live because
+  // Chromium hands out no WebGPU adapter when Vulkan is disabled. Palette
+  // deliberately sits with the 0x2d1f16 fog rather than fighting it.
+  const sky = createSkyCycle(scene, {
+    frames: skyFrames("./assets/ember-sky", 6),
+    radius: 700,          // inside the camera's 900 far plane
+    hold: 3.0,
+    fade: 3.0,
+  });
   scene.fog = new THREE.Fog(0x2d1f16, 26, 450);
 
   // ── Procedural twinkling starfield (layered in front of the sky image) ──
@@ -2665,6 +2669,7 @@ export async function initGame() {
     lastDt = dt;
 
     updateDust(dt);
+    sky.update(dt, camera);
     stars.position.copy(camera.position);
     starMat.uniforms.uTime.value = t;
 

@@ -19,8 +19,10 @@ struct Params {
 
 const PI: f32 = 3.14159265359;
 
-// Molten planet, placed toward the horizon so it reads from eye level.
-const PLANET_DIR: vec3f = vec3f(0.34, 0.1, 0.93);
+// Molten planet. y sets elevation: 0.1 put it at ~6 degrees, nearly on the
+// horizon and easily hidden by terrain; 0.45 lifts it to ~24, where it clears
+// the skyline and is visible from eye level without looking straight up.
+const PLANET_DIR: vec3f = vec3f(0.34, 0.45, 0.93);
 const PLANET_DIST: f32 = 10.0;
 const PLANET_RADIUS: f32 = 3.1;
 
@@ -180,7 +182,10 @@ fn shadeMoon(hitPoint: vec3f, centre: vec3f) -> vec3f {
 @fragment fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
   // Longitude across the image, latitude up it; the centre maps to +Z.
   let lon = (uv.x * 2.0 - 1.0) * PI;
-  let lat = (uv.y - 0.5) * PI;
+  // Negated: THREE's equirectUv maps up to v=1, and flipY (the TextureLoader
+  // default) puts v=1 at the image's TOP row — so high elevation has to land
+  // at the top of the bake, not the bottom.
+  let lat = (0.5 - uv.y) * PI;
   let dir = normalize(vec3f(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon)));
 
   var color = nebula(dir) + starField(dir);

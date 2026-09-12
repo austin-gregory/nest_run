@@ -121,7 +121,9 @@ fn volumeSample(point: vec3f, rayVelocity: vec3f) -> vec4f {
   // to +forward so the hole sits in front of the viewer rather than split
   // across the seam behind them.
   let lon = (uv.x * 2.0 - 1.0) * PI;
-  let lat = (uv.y - 0.5) * PI;
+  // Negated so up in the sky lands at the TOP of the baked image, matching
+  // THREE's equirectUv + flipY convention.
+  let lat = (0.5 - uv.y) * PI;
   let dir = vec3f(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
 
   // Orient the sphere so the hole sits in front of the default view direction.

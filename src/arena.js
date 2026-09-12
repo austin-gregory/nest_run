@@ -8,6 +8,7 @@ import { createWeaponView } from "./weaponView.js";
 import { createArenaRoom, joinArenaRoom } from "./network.js";
 import { getUser, getDisplayName, getCachedCustomization } from "./supabase.js";
 import { createBackdrop, isBackdropSupported } from "./backdrop.js";
+import { createSkyCycle, skyFrames } from "./skyCycle.js";
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -27,13 +28,16 @@ export async function initArena() {
   const ui = createUI();
 
   const scene = new THREE.Scene();
-  // Arena's sky is baked from the WebGPU black hole shaders (tools/bake-backdrop.mjs)
-  // into an equirect PNG, so it needs no WebGPU at runtime — Chromium hands out
-  // no adapter when Vulkan is disabled, which is common on Linux.
-  const skyTex = new THREE.TextureLoader().load("./assets/blackhole-sky.png");
-  skyTex.colorSpace = THREE.SRGBColorSpace;
-  skyTex.mapping = THREE.EquirectangularReflectionMapping;
-  scene.background = skyTex;
+  // Arena's sky is baked from the WebGPU black hole shaders (tools/bake-frames.mjs)
+  // into a crossfading sequence, so the accretion disk churns without needing
+  // WebGPU at runtime — Chromium hands out no adapter when Vulkan is disabled,
+  // which is common on Linux.
+  const sky = createSkyCycle(scene, {
+    frames: skyFrames("./assets/blackhole-sky", 6),
+    radius: 450,          // inside the camera's 600 far plane
+    hold: 3.0,
+    fade: 3.0,
+  });
   scene.fog = new THREE.Fog(0x05070a, 40, 260);
 
   // ── Procedural twinkling starfield (layered in front of the sky image) ──
@@ -112,7 +116,7 @@ export async function initArena() {
     backdrop.ready.then((ok) => {
       if (!ok) { backdrop = null; return; }
       renderer.setClearColor(0x000000, 0);
-      scene.background = null;      // the live shader draws its own sky and stars
+      sky.mesh.visible = false;     // the live shader draws its own sky and stars
       stars.visible = false;
     });
   }
@@ -1209,6 +1213,7 @@ export async function initArena() {
     last = t;
     lastDt = dt;
 
+    sky.update(dt, camera);
     camera.getWorldPosition(stars.position);
     stars.rotation.y += STAR_SPIN * dt;
     starMat.uniforms.uTime.value = t;
