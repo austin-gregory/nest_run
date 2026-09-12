@@ -138,6 +138,17 @@
   <h1 style="color:#00b4ff;font-size:52px;margin:0;letter-spacing:6px;">COMMANDER</h1>
   <p style="color:#aaa;font-size:16px;margin:0;">Spawn alien bugs to stop the FPS player</p>
   <p id="overlay-status" style="color:#fff;font-size:18px;margin:8px 0;">Connecting...</p>
+
+  <div id="rts-bot-row" style="display:flex;align-items:center;gap:12px;margin-top:6px;">
+    <button id="rts-bot-less" style="width:44px;height:44px;font-size:24px;font-family:monospace;background:rgba(255,255,255,.06);color:#fff;border:1px solid rgba(0,180,255,.3);border-radius:6px;cursor:pointer;">&minus;</button>
+    <span id="rts-bot-count" style="color:#ddcc00;font-size:18px;letter-spacing:2px;min-width:110px;text-align:center;">Bot shooters: 0</span>
+    <button id="rts-bot-more" style="width:44px;height:44px;font-size:24px;font-family:monospace;background:rgba(255,255,255,.06);color:#fff;border:1px solid rgba(0,180,255,.3);border-radius:6px;cursor:pointer;">+</button>
+  </div>
+  <button id="rts-start-bots" disabled
+    style="padding:14px 40px;font-size:20px;font-family:monospace;background:#333;color:#666;border:none;border-radius:6px;cursor:not-allowed;letter-spacing:3px;margin-top:4px;">
+    START VS BOTS
+  </button>
+  <p style="color:#666;font-size:13px;margin:2px 0 0;">Add at least one bot shooter to play without other people.</p>
 </div>
 
 <script type="module">

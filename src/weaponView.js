@@ -107,17 +107,26 @@ export async function createWeaponView(scene, config) {
   for (const n of recoilNodes) recoilBaseZ.set(n, n.position.z);
   const slideBaseZ = slideNode ? slideNode.position.z : 0;
 
+  // Each shot pushes the model back, but the push is capped: at 11.2 shots/sec
+  // the per-shot 0.03 outran the settle() recovery and the gun drifted away
+  // from the camera during sustained fire.
+  const KICK_STEP = 0.03;
+  const KICK_MAX = 0.055;
+
   function kick() {
     slideBack = Math.max(slideBack, slideTravel);
-    for (const n of recoilNodes) n.position.z += 0.03;
+    for (const n of recoilNodes) {
+      const baseZ = recoilBaseZ.get(n) ?? n.position.z;
+      n.position.z = Math.min(n.position.z + KICK_STEP, baseZ + KICK_MAX);
+    }
   }
 
   function settle(dt) {
-    slideBack = THREE.MathUtils.lerp(slideBack, 0, 30 * dt);
+    slideBack = THREE.MathUtils.damp(slideBack, 0, 30, dt);
     if (slideNode) slideNode.position.z = slideBaseZ + slideBack;
     for (const n of recoilNodes) {
       const baseZ = recoilBaseZ.get(n) ?? n.position.z;
-      n.position.z = THREE.MathUtils.lerp(n.position.z, baseZ, 18 * dt);
+      n.position.z = THREE.MathUtils.damp(n.position.z, baseZ, 18, dt);
     }
   }
 

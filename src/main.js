@@ -7,6 +7,7 @@ import { createWorld } from "./world.js";
 import { createWeaponView } from "./weaponView.js";
 import { connectToGame, createRoom, joinRoom } from "./network.js";
 import { recordGame, getUser, getDisplayName, getCachedCustomization } from "./supabase.js";
+import { createCoopBot, tickCoopBot, killCoopBot } from "./coopBot.js";
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -369,6 +370,24 @@ export async function initGame() {
     can: 0,
   };
 
+  // ── Recoil ────────────────────────────────────────────────────────────
+  // Each shot pushes `kickPitch/kickYaw`, which decays back to zero; the view
+  // damps toward that so the rise is smooth instead of a per-shot snap. Only
+  // RECOIL_CLIMB of each shot is baked into player.pitch permanently, so the
+  // muzzle still walks upward under sustained fire but the aim returns to
+  // roughly where the player was pointing once they stop.
+  const RECOIL_CLIMB = 0.28;  // fraction of each kick that sticks
+  const RECOIL_RISE  = 26;    // how fast the view catches up to the kick
+  const RECOIL_DECAY = 9;     // how fast the kick bleeds back to zero
+  const recoil = { pitch: 0, yaw: 0, kickPitch: 0, kickYaw: 0 };
+
+  function recoilTick(dt) {
+    recoil.kickPitch = THREE.MathUtils.damp(recoil.kickPitch, 0, RECOIL_DECAY, dt);
+    recoil.kickYaw   = THREE.MathUtils.damp(recoil.kickYaw, 0, RECOIL_DECAY, dt);
+    recoil.pitch = THREE.MathUtils.damp(recoil.pitch, recoil.kickPitch, RECOIL_RISE, dt);
+    recoil.yaw   = THREE.MathUtils.damp(recoil.yaw, recoil.kickYaw, RECOIL_RISE, dt);
+  }
+
   // ── Speed boost state ─────────────────────────────────────────────────
   let speedBoostActive = false;
   let speedBoostEnd = 0;
@@ -526,7 +545,7 @@ export async function initGame() {
   function collidePlayer() {
     const rawY = map.gy(player.pos.x, player.pos.z);
     // Smooth terrain height to prevent jitter on uneven ground
-    smoothGroundY += (rawY - smoothGroundY) * Math.min(1, 25 * lastDt);
+    smoothGroundY = THREE.MathUtils.damp(smoothGroundY, rawY, 25, lastDt);
     const y = smoothGroundY;
     if (player.pos.y < y + player.height) {
       player.pos.y = y + player.height;
@@ -1296,6 +1315,159 @@ export async function initGame() {
   let isEnemyHost = true; // am I the AI-host for enemies?
   let isCoopMode = false; // coop = multiple shooters, no commander
 
+  // ── Co-op bots ─────────────────────────────────────────────────────────
+  // Only the server-elected host simulates them; everyone else just sees them
+  // as ordinary FPS players via syncOtherPlayers().
+  const coopBots = new Map();   // sid -> bot instance
+  let botHostSid = null;
+  let amBotHost = false;
+  const _botShotFrom = new THREE.Vector3();
+  const _botShotTo = new THREE.Vector3();
+
+  function syncBotRoster() {
+    if (!room || !room.state) return;
+    const live = new Set();
+    room.state.players.forEach((p, sid) => {
+      if (!sid.startsWith("bot-")) return;
+      live.add(sid);
+      if (!coopBots.has(sid)) {
+        const index = parseInt(sid.slice(4), 10) || 0;
+        coopBots.set(sid, createCoopBot(index));
+      }
+    });
+    for (const sid of [...coopBots.keys()]) {
+      if (!live.has(sid)) coopBots.delete(sid);
+    }
+  }
+
+  function botTick(dt) {
+    if (!amBotHost || coopBots.size === 0 || !game.started || game.win) return;
+    syncBotRoster();
+
+    // Bugs the bots can see, as plain records the AI can read and damage.
+    const enemyViews = [];
+    const enemyBySource = new Map();
+    for (const en of enemies) {
+      if (en._destroyed) continue;
+      const v = {
+        id: en.networkId || null,
+        x: en.mesh.position.x, y: en.mesh.position.y, z: en.mesh.position.z,
+        hp: en.hp, alive: true, dormant: !!en.dormant,
+      };
+      enemyViews.push(v);
+      enemyBySource.set(v, en);
+    }
+
+    const allies = [{ x: player.pos.x, z: player.pos.z }];
+    for (const b of coopBots.values()) allies.push({ x: b.x, z: b.z });
+
+    // The wall currently pinning the cart, if any — carTick() clamps progress
+    // at the nearest one ahead, and until it's destroyed nothing advances.
+    let blockingWall = null;
+    for (const w of walls) {
+      if (w.hp <= 0) continue;
+      if (map.cart.p < w.progress - 0.02) continue;   // not reached it yet
+      if (!blockingWall || w.progress < blockingWall.progress) blockingWall = w;
+    }
+    const wallView = blockingWall ? {
+      id: blockingWall.id,
+      x: blockingWall.mesh.position.x,
+      y: blockingWall.mesh.position.y,
+      z: blockingWall.mesh.position.z,
+      hp: blockingWall.hp,
+    } : null;
+
+    const ctx = {
+      map,
+      enemies: enemyViews,
+      allies,
+      blockingWall: wallView,
+      onWallShoot: (bot, wv, hit) => {
+        _botShotFrom.set(bot.x, bot.y - 0.15, bot.z);
+        _botShotTo.set(wv.x, wv.y, wv.z);
+        if (!hit) {
+          _botShotTo.x += (Math.random() - 0.5) * 3;
+          _botShotTo.y += (Math.random() - 0.5) * 3;
+          _botShotTo.z += (Math.random() - 0.5) * 3;
+        }
+        spawnTracer(_botShotFrom.clone(), _botShotTo.clone());
+        if (room && isMultiplayer) {
+          room.send("botShot", {
+            fx: _botShotFrom.x, fy: _botShotFrom.y, fz: _botShotFrom.z,
+            tx: _botShotTo.x, ty: _botShotTo.y, tz: _botShotTo.z,
+          });
+        }
+        if (!hit || !blockingWall) return;
+        blockingWall.hp -= weapon.dmg;
+        blockingWall.mat.emissive.setHex(0x552200);
+        blockingWall.mat.emissiveIntensity = 1.5;
+        if (room) room.send("wallHit", { id: blockingWall.id, dmg: weapon.dmg });
+        if (blockingWall.hp <= 0) destroyWall(blockingWall.id);
+      },
+      onShoot: (bot, tgt, hit) => {
+        _botShotFrom.set(bot.x, bot.y - 0.15, bot.z);
+        _botShotTo.set(tgt.x, tgt.y + 0.6, tgt.z);
+        if (!hit) {
+          _botShotTo.x += (Math.random() - 0.5) * 2.5;
+          _botShotTo.y += (Math.random() - 0.5) * 2.5;
+          _botShotTo.z += (Math.random() - 0.5) * 2.5;
+        }
+        spawnTracer(_botShotFrom.clone(), _botShotTo.clone());
+        if (room && isMultiplayer) {
+          room.send("botShot", {
+            fx: _botShotFrom.x, fy: _botShotFrom.y, fz: _botShotFrom.z,
+            tx: _botShotTo.x, ty: _botShotTo.y, tz: _botShotTo.z,
+          });
+        }
+      },
+      onKill: (bot, tgt) => {
+        const en = enemyBySource.get(tgt);
+        if (en) destroyEnemy(en, false);
+      },
+    };
+
+    for (const bot of coopBots.values()) {
+      tickCoopBot(bot, dt, ctx);
+      // Drive the visible model directly so the host doesn't wait on the
+      // server round-trip to see its own bots move.
+      const op = otherPlayers.get(bot.sid);
+      if (op) {
+        op._tx = bot.x; op._ty = bot.y; op._tz = bot.z;
+        op._tyaw = bot.yaw; op._tpitch = bot.pitch;
+        op._ground = bot.ground; op._hp = bot.hp;
+      }
+    }
+
+    // Bots damaged the view records; write the survivors back onto the bugs.
+    for (const v of enemyViews) {
+      const en = enemyBySource.get(v);
+      if (en && !en._destroyed && en.hp !== v.hp) {
+        en.hp = v.hp;
+        en.flash = 0.1;
+      }
+    }
+
+    // Bugs bite back. Same rule aiTick() applies to the local player, on the
+    // bug's own attack cooldown, so bots aren't invulnerable escorts.
+    const biteReach = 1.5 * BUG_SCALE;
+    const dmgScale = 1 / (1 + enemies.length * 0.12);
+    for (const en of enemies) {
+      if (en._destroyed || en.dormant) continue;
+      if (en.botAtk === undefined) en.botAtk = 0;
+      en.botAtk = Math.max(0, en.botAtk - dt);
+      if (en.botAtk > 0) continue;
+      for (const bot of coopBots.values()) {
+        if (bot.dead) continue;
+        const d = Math.hypot(en.mesh.position.x - bot.x, en.mesh.position.z - bot.z);
+        if (d >= biteReach) continue;
+        en.botAtk = 0.75;
+        bot.hp -= (8 + Math.random() * 4) * dmgScale;
+        if (bot.hp <= 0) killCoopBot(bot);
+        break;
+      }
+    }
+  }
+
   function updateHostStatus() {
     // Lowest colorIndex among connected FPS players is the host
     if (!room || !room.state) { isEnemyHost = true; return; }
@@ -1322,8 +1494,12 @@ export async function initGame() {
 
     const isAiming = input.pointer.aim || input.gamepad.aim || input.touch.aim;
     const recoilMul = isAiming ? 0.72 : 1;
-    player.pitch = clamp(player.pitch + weapon.rp * recoilMul, -1.45, 1.45);
-    player.yaw += (Math.random() * 2 - 1) * weapon.ry * (isAiming ? 0.55 : 1);
+    const kickP = weapon.rp * recoilMul;
+    const kickY = (Math.random() * 2 - 1) * weapon.ry * (isAiming ? 0.55 : 1);
+    recoil.kickPitch += kickP;
+    recoil.kickYaw += kickY;
+    player.pitch = clamp(player.pitch + kickP * RECOIL_CLIMB, -1.45, 1.45);
+    player.yaw += kickY * RECOIL_CLIMB;
     weaponView.kick();
     muzzleFlashLife = 0.055;
     spawnShell();
@@ -1458,12 +1634,20 @@ export async function initGame() {
     en.hp -= ePart === "head" ? weapon.dmg * 1.55 : weapon.dmg;
     en.flash = 0.1;
     if (en.hp > 0) return;
+    destroyEnemy(en, true);
+  }
+
+  // Tear down a dead bug and report it. `creditPlayer` is false for bot kills so
+  // they don't inflate the local player's score.
+  function destroyEnemy(en, creditPlayer) {
+    if (!en || en._destroyed) return;
+    en._destroyed = true;
 
     const bi = targets.indexOf(en.bodyProxy);
     if (bi >= 0) targets.splice(bi, 1);
     const hi = targets.indexOf(en.headProxy);
     if (hi >= 0) targets.splice(hi, 1);
-    game.kills++;
+    if (creditPlayer) game.kills++;
     en.mixer.stopAllAction();
     const gorePos = en.mesh.position.clone();
     gorePos.y += BUG_SCALE * 0.55;
@@ -1481,7 +1665,8 @@ export async function initGame() {
       spawnGore(gorePos);
     }
     map.world.remove(en.mesh);
-    enemies.splice(enemies.indexOf(en), 1);
+    const idx = enemies.indexOf(en);
+    if (idx >= 0) enemies.splice(idx, 1);
     rebuildRayTargets();
     hud();
 
@@ -1731,18 +1916,30 @@ export async function initGame() {
   function carTick(dt) {
     const dx = player.pos.x - map.car.position.x;
     const dz = player.pos.z - map.car.position.z;
-    const near = Math.hypot(dx, dz) <= map.cart.rad;
+    const playerNear = Math.hypot(dx, dz) <= map.cart.rad;
+
+    // Bots we simulate push the cart too, otherwise they just tag along behind
+    // whatever a human is doing — and in a commander-vs-bots match nothing
+    // would ever advance it.
+    let botNear = false;
+    if (amBotHost) {
+      for (const b of coopBots.values()) {
+        if (!b.dead && b.pushingCart) { botNear = true; break; }
+      }
+    }
+    const near = playerNear || botNear;
 
     if (!game.win) {
       if (near && !game.resp) {
         map.cart.p += (map.cart.fwd * dt) / map.trackLength;
         ui.setStatus("Escorting car to nest");
-      } else if (game.resp && !isMultiplayer) {
-        // Only roll back in singleplayer — in multiplayer another player may be pushing
+      } else if (game.resp && !isMultiplayer && !botNear) {
+        // Only roll back in singleplayer — in multiplayer another player may be
+        // pushing, and a bot of ours holding the cart counts as a pusher.
         map.cart.p -= (map.cart.back * dt) / map.trackLength;
         ui.setStatus("Car rolling back - spawn rate rising");
-      } else if (!near && !game.resp) {
-        ui.setStatus("Get closer");
+      } else if (!playerNear && !game.resp) {
+        ui.setStatus(botNear ? "Bots escorting car to nest" : "Get closer");
       }
     }
 
@@ -1889,8 +2086,8 @@ export async function initGame() {
         const m = dist > 0.8 ? 1 : 0;
         const spd = speedBoostActive ? en.s * 2 : en.s;
         const move = f.multiplyScalar(spd * m);
-        en.vel.x += (move.x - en.vel.x) * Math.min(1, en.acc * dt);
-        en.vel.z += (move.z - en.vel.z) * Math.min(1, en.acc * dt);
+        en.vel.x = THREE.MathUtils.damp(en.vel.x, move.x, en.acc, dt);
+        en.vel.z = THREE.MathUtils.damp(en.vel.z, move.z, en.acc, dt);
         en.mesh.position.x += en.vel.x * dt;
         en.mesh.position.z += en.vel.z * dt;
         en.jump -= dt;
@@ -2010,6 +2207,18 @@ export async function initGame() {
       ground: player.ground,
       cartProgress: map.cart.p,
     });
+
+    // Only the bot host publishes bot transforms
+    if (amBotHost && coopBots.size > 0) {
+      const bots = [];
+      for (const b of coopBots.values()) {
+        bots.push({
+          sid: b.sid, x: b.x, y: b.y, z: b.z,
+          yaw: b.yaw, pitch: b.pitch, hp: b.hp, ground: b.ground,
+        });
+      }
+      room.send("botUpdate", bots);
+    }
 
     // Only the enemy host sends positions (authoritative AI)
     if (isEnemyHost && enemies.length > 0) {
@@ -2482,18 +2691,20 @@ export async function initGame() {
     }
 
     if (game.resp) {
-      player.pitch = THREE.MathUtils.lerp(player.pitch, 1.3, Math.min(1, 5 * dt));
-      player.height = THREE.MathUtils.lerp(player.height, 0.28, Math.min(1, 3 * dt));
-      game.deathRoll = THREE.MathUtils.lerp(game.deathRoll, 0.6, Math.min(1, 4 * dt));
+      player.pitch = THREE.MathUtils.damp(player.pitch, 1.3, 5, dt);
+      player.height = THREE.MathUtils.damp(player.height, 0.28, 3, dt);
+      game.deathRoll = THREE.MathUtils.damp(game.deathRoll, 0.6, 4, dt);
     }
+
+    recoilTick(dt);
 
     if (vrMode) {
       xr.rig.rotation.set(0, player.yaw, 0);
       camera.rotation.set(0, 0, 0);
     } else {
       camera.rotation.order = "YXZ";
-      camera.rotation.y = player.yaw;
-      camera.rotation.x = player.pitch;
+      camera.rotation.y = player.yaw + recoil.yaw;
+      camera.rotation.x = clamp(player.pitch + recoil.pitch, -1.5, 1.5);
       camera.rotation.z = game.deathRoll;
     }
 
@@ -2633,20 +2844,20 @@ export async function initGame() {
     spawnTick(dt);
     aiCommanderTick(dt, t);
     aiTick(dt, t);
+    botTick(dt);
     networkTick(dt);
     lerpOtherPlayers(dt);
 
     const hs = Math.hypot(player.vel.x, player.vel.z);
     // Smooth ground factor to prevent bob jitter at terrain transitions
     const gfTarget = player.ground ? 1 : 0;
-    groundFactor += (gfTarget - groundFactor) * Math.min(1, 12 * dt);
+    groundFactor = THREE.MathUtils.damp(groundFactor, gfTarget, 12, dt);
     bob += (hs * (0.2 + 0.8 * groundFactor)) * dt * 2.8;
     const by = Math.sin(bob) * 0.035 * groundFactor;
     const bx = Math.cos(bob * 0.5) * 0.02 * groundFactor;
     // Smooth camera Y to prevent jitter on uneven terrain
     const camYTarget = player.pos.y + by;
-    const camLerp = Math.min(1, 20 * dt);
-    smoothCamY += (camYTarget - smoothCamY) * camLerp;
+    smoothCamY = THREE.MathUtils.damp(smoothCamY, camYTarget, 20, dt);
     if (vrMode) {
       xr.rig.position.set(player.pos.x, player.pos.y - player.height, player.pos.z);
     } else {
@@ -2658,7 +2869,7 @@ export async function initGame() {
 
     const aiming = input.pointer.aim || gp.aim || input.touch.aim;
     const fov = aiming ? 30 : sprint ? 100 : 94;
-    camera.fov += (fov - camera.fov) * Math.min(1, 12 * dt);
+    camera.fov = THREE.MathUtils.damp(camera.fov, fov, 12, dt);
     camera.updateProjectionMatrix();
     ui.setCrosshairAim(aiming, trapActive);
 
@@ -2814,6 +3025,8 @@ export async function initGame() {
     }
     isMultiplayer = true;
     mySessionId = room.sessionId;
+    // A botHost message can land before this assignment, so re-resolve it here.
+    amBotHost = !!(botHostSid && botHostSid === mySessionId);
     console.log("[network] Connected as FPS player, sessionId:", mySessionId);
 
     // Show waiting overlay with start buttons
@@ -2851,19 +3064,61 @@ export async function initGame() {
     btnPvpStart.addEventListener("click", () => {
       if (room && !btnPvpStart.disabled) room.send("requestStart", { mode: "pvp" });
     });
+    // ── Bot fill controls ──────────────────────────────────────────────
+    const botRow = document.createElement("div");
+    botRow.style.cssText = "display:flex;align-items:center;gap:12px;";
+    const botLabel = document.createElement("span");
+    botLabel.id = "wait-bot-count";
+    botLabel.textContent = "Bots: 0";
+    botLabel.style.cssText = "color:#ddcc00;font-size:18px;letter-spacing:2px;min-width:90px;text-align:center;";
+    const stepStyle = [
+      "width:44px", "height:44px", "font-size:24px", "font-family:monospace",
+      "background:rgba(255,255,255,.06)", "color:#fff",
+      "border:1px solid rgba(0,180,255,.3)", "border-radius:6px",
+      "cursor:pointer",
+    ].join(";");
+    const btnBotLess = document.createElement("button");
+    btnBotLess.id = "btn-bot-less";
+    btnBotLess.textContent = "−";
+    btnBotLess.style.cssText = stepStyle;
+    const btnBotMore = document.createElement("button");
+    btnBotMore.id = "btn-bot-more";
+    btnBotMore.textContent = "+";
+    btnBotMore.style.cssText = stepStyle;
+    let wantBots = 0, maxBots = 3;
+    function pushBots(n) {
+      wantBots = Math.max(0, Math.min(maxBots, n));
+      if (room) room.send("setBots", { count: wantBots });
+    }
+    btnBotLess.addEventListener("click", () => pushBots(wantBots - 1));
+    btnBotMore.addEventListener("click", () => pushBots(wantBots + 1));
+    botRow.append(btnBotLess, botLabel, btnBotMore);
+
     const waitSub = document.createElement("p");
     waitSub.textContent = "Waiting for players to join...";
     waitSub.style.cssText = "color:#888;font-size:14px;";
-    waitingOverlay.append(waitPlayerCount, btnCoopStart, btnPvpStart, waitSub);
+    waitingOverlay.append(waitPlayerCount, botRow, btnCoopStart, btnPvpStart, waitSub);
     document.body.appendChild(waitingOverlay);
-    waitingGpNav = gamepadMenuNav([btnCoopStart, btnPvpStart]);
+    waitingGpNav = gamepadMenuNav([btnBotLess, btnBotMore, btnCoopStart, btnPvpStart]);
 
     // Listen for player count updates
     room.onMessage("playerCount", (data) => {
       const el = document.getElementById("wait-player-count");
       if (el) el.textContent = "Shooters: " + data.fpsCount + "/4";
+      // Server is authoritative on how many bots actually fit.
+      wantBots = data.botCount || 0;
+      maxBots = Math.max(0, (data.maxBots != null ? data.maxBots : 4) - 1);
+      const botEl = document.getElementById("wait-bot-count");
+      if (botEl) botEl.textContent = "Bots: " + wantBots;
+      const lessBtn = document.getElementById("btn-bot-less");
+      const moreBtn = document.getElementById("btn-bot-more");
+      if (lessBtn) lessBtn.disabled = wantBots <= 0;
+      if (moreBtn) moreBtn.disabled = wantBots >= maxBots;
       const coopBtn = document.getElementById("btn-coop-start");
-      if (coopBtn) coopBtn.textContent = data.fpsCount >= 2 ? "Start Co-op" : "Start Solo";
+      if (coopBtn) {
+        const team = data.fpsCount + wantBots;
+        coopBtn.textContent = team >= 2 ? "Start Co-op" : "Start Solo";
+      }
       const pvpBtn = document.getElementById("btn-pvp-start");
       if (pvpBtn) {
         if (data.hasRts) {
@@ -3034,6 +3289,20 @@ export async function initGame() {
     });
 
     // If we got assigned as RTS by mistake, redirect
+    room.onMessage("botHost", (data) => {
+      botHostSid = data && data.sid ? data.sid : null;
+      amBotHost = !!(mySessionId && botHostSid === mySessionId);
+      syncBotRoster();
+    });
+
+    room.onMessage("botShot", (data) => {
+      if (!data) return;
+      spawnTracer(
+        new THREE.Vector3(data.fx, data.fy, data.fz),
+        new THREE.Vector3(data.tx, data.ty, data.tz)
+      );
+    });
+
     room.onMessage("roleAssign", (data) => {
       if (data.role === "rts") {
         console.log("[network] Assigned RTS role, redirecting...");

@@ -1,6 +1,14 @@
 const { Room } = require("colyseus");
 const { GameState, Player, Enemy } = require("./GameState");
 
+// Shooter spawn points (mirrored from WORLD.SPAWN_POINTS in client constants.js)
+const BOT_SPAWNS = [
+  { x: -90.1, z: 145, yaw: 0 },
+  { x: -83.1, z: 145, yaw: 0 },
+  { x: -90.1, z: 139, yaw: 0 },
+  { x: -83.1, z: 139, yaw: 0 },
+];
+
 // RTS constants (mirrored from client constants.js)
 const RTS = {
   BIOMASS_START: 100,
@@ -165,6 +173,8 @@ class GameRoom extends Room {
     this._trappedPlayers = new Map(); // playerSid → { trapIndex, endTime }
     this._eggSacPositions = generateEggSacPositions();
     this._customizations = new Map(); // sessionId -> { base, head, torso, arms, legs }
+    this._botSids = [];            // bot player ids currently in state ("bot-0"…)
+    this._botHost = null;          // sessionId of the client simulating bots+bugs
 
     // Room name from options
     const roomName = (options && options.roomName) || "Game Room";
@@ -243,11 +253,12 @@ class GameRoom extends Room {
       this.broadcast("enemyWake", { id });
     });
 
-    // FPS host spawns enemy in coop mode (no commander)
+    // FPS host (or the bot host, when no shooters are human) spawns coop enemies
     this.onMessage("coopSpawnEnemy", (client, data) => {
       if (this.state.phase !== "playing") return;
       const player = this.state.players.get(client.sessionId);
-      if (!player || player.role !== "fps") return;
+      if (!player) return;
+      if (player.role !== "fps" && client.sessionId !== this._botHost) return;
 
       const x = Number(data.x) || 0;
       const z = Number(data.z) || 0;
@@ -270,11 +281,14 @@ class GameRoom extends Room {
       this.broadcast("enemySpawn", { id, x, z, hp, speed, bugType });
     });
 
-    // FPS client reports an enemy was killed
+    // FPS client reports an enemy was killed. The bot host also reports kills
+    // made by its bots — in a commander-vs-bots match that host is the rts
+    // client, so allow it through too.
     this.onMessage("enemyKilled", (client, data) => {
       if (this.state.phase !== "playing") return;
       const player = this.state.players.get(client.sessionId);
-      if (!player || player.role !== "fps") return;
+      if (!player) return;
+      if (player.role !== "fps" && client.sessionId !== this._botHost) return;
 
       const id = data.id;
       const enemy = this.state.enemies.get(id);
@@ -311,6 +325,9 @@ class GameRoom extends Room {
     this.onMessage("enemyPositions", (client, data) => {
       if (this.state.phase !== "playing") return;
       if (!Array.isArray(data)) return;
+      const sender = this.state.players.get(client.sessionId);
+      if (!sender) return;
+      if (sender.role !== "fps" && client.sessionId !== this._botHost) return;
       for (const ep of data) {
         const enemy = this.state.enemies.get(ep.id);
         if (enemy) {
@@ -371,11 +388,13 @@ class GameRoom extends Room {
       this.broadcast("wallSpawn", { id, progress, hp: RTS.WALL_HP });
     });
 
-    // FPS client reports wall damage
+    // FPS client reports wall damage. The bot host reports its bots' damage
+    // too — in a commander-vs-bots match that host is the rts client.
     this.onMessage("wallHit", (client, data) => {
       if (this.state.phase !== "playing") return;
       const player = this.state.players.get(client.sessionId);
-      if (!player || player.role !== "fps") return;
+      if (!player) return;
+      if (player.role !== "fps" && client.sessionId !== this._botHost) return;
 
       const wall = this._walls[data.id];
       if (!wall) return;
@@ -466,6 +485,121 @@ class GameRoom extends Room {
         this._startGame(fc >= 2 ? "coop" : "singleplayer");
       }
     });
+
+    // Commander starts a game against bot shooters (no human shooters needed).
+    this.onMessage("requestStartCommander", (client) => {
+      if (this.state.phase !== "waiting") return;
+      const p = this.state.players.get(client.sessionId);
+      if (!p || p.role !== "rts") return;
+      if (this._botSids.length === 0) return;   // nothing to play against
+      this._startGame("multiplayer");
+    });
+
+    // Lobby: set how many shooter slots are filled with bots.
+    this.onMessage("setBots", (client, data) => {
+      if (this.state.phase !== "waiting") return;
+      const p = this.state.players.get(client.sessionId);
+      if (!p) return;
+      const want = Math.max(0, Math.min(4, (data && data.count) | 0));
+      this._setBotCount(want);
+    });
+
+    // Host publishes simulated bot transforms.
+    this.onMessage("botUpdate", (client, data) => {
+      if (this.state.phase !== "playing") return;
+      if (client.sessionId !== this._botHost) return;
+      if (!Array.isArray(data)) return;
+      for (const b of data) {
+        const p = this.state.players.get(b.sid);
+        if (!p || p.role !== "fps") continue;
+        if (typeof b.x === "number" && !isNaN(b.x)) p.x = b.x;
+        if (typeof b.y === "number" && !isNaN(b.y)) p.y = b.y;
+        if (typeof b.z === "number" && !isNaN(b.z)) p.z = b.z;
+        if (typeof b.yaw === "number" && !isNaN(b.yaw)) p.yaw = b.yaw;
+        if (typeof b.pitch === "number" && !isNaN(b.pitch)) p.pitch = b.pitch;
+        if (typeof b.hp === "number" && !isNaN(b.hp)) p.hp = b.hp;
+        if (typeof b.ground === "boolean") p.ground = b.ground;
+      }
+    });
+
+    // Host relays a bot's tracer so every client sees it fire.
+    this.onMessage("botShot", (client, data) => {
+      if (this.state.phase !== "playing") return;
+      if (client.sessionId !== this._botHost) return;
+      this.broadcast("botShot", data, { except: client });
+    });
+  }
+
+  // ── Bots ────────────────────────────────────────────────────────────────
+  _realFpsCount() {
+    let n = 0;
+    this.state.players.forEach((p, sid) => {
+      if (p.role === "fps" && !sid.startsWith("bot-")) n++;
+    });
+    return n;
+  }
+
+  _setBotCount(want) {
+    const realFps = this._realFpsCount();
+    const room = Math.max(0, 4 - realFps);
+    want = Math.min(want, room);
+
+    // Remove surplus bots (highest index first) so colour slots stay stable.
+    while (this._botSids.length > want) {
+      const sid = this._botSids.pop();
+      this.state.players.delete(sid);
+    }
+
+    // Add bots into whatever colour slots are free.
+    while (this._botSids.length < want) {
+      const used = new Set();
+      this.state.players.forEach((p) => {
+        if (p.role === "fps") used.add(p.colorIndex);
+      });
+      let colorIndex = 0;
+      for (let i = 0; i < 4; i++) if (!used.has(i)) { colorIndex = i; break; }
+
+      const sid = `bot-${colorIndex}`;
+      if (this.state.players.has(sid)) break;  // colour slots exhausted
+
+      const bot = new Player();
+      bot.role = "fps";
+      bot.colorIndex = colorIndex;
+      bot.hp = 200;
+      const sp = BOT_SPAWNS[colorIndex] || BOT_SPAWNS[0];
+      bot.x = sp.x; bot.y = 1.75; bot.z = sp.z; bot.yaw = sp.yaw;
+      this.state.players.set(sid, bot);
+      this._botSids.push(sid);
+    }
+
+    this._electBotHost(true);
+    this._updateMetadata();
+    this._broadcastPlayerCount();
+  }
+
+  _clearBots() {
+    for (const sid of this._botSids) this.state.players.delete(sid);
+    this._botSids = [];
+    this._botHost = null;
+  }
+
+  // Lowest-colorIndex human shooter hosts; with no human shooters the
+  // commander does, so a commander-vs-bots match still has a simulator.
+  _electBotHost(force) {
+    let best = null, bestColor = Infinity, rts = null;
+    this.state.players.forEach((p, sid) => {
+      if (sid.startsWith("bot-")) return;
+      if (p.role === "fps" && p.colorIndex < bestColor) { bestColor = p.colorIndex; best = sid; }
+      if (p.role === "rts") rts = sid;
+    });
+    const host = best || rts;
+    // `force` re-announces even when the host is unchanged — a client that was
+    // still connecting during the first election would otherwise never hear it.
+    if (force || host !== this._botHost) {
+      this._botHost = host;
+      this.broadcast("botHost", { sid: host, bots: this._botSids.slice() });
+    }
+    return host;
   }
 
   onJoin(client, options) {
@@ -474,14 +608,20 @@ class GameRoom extends Room {
     // Determine role from options or auto-assign
     const requestedRole = options && options.role;
 
-    let fpsCount = 0, hasRts = false;
-    const usedColors = new Set();
-    this.state.players.forEach((p) => {
-      if (p.role === "fps") { fpsCount++; usedColors.add(p.colorIndex); }
-      if (p.role === "rts") hasRts = true;
+    // Humans and bots both hold colour slots, but only humans consume capacity —
+    // a bot is evicted to make room rather than blocking the join.
+    let realFps = 0, hasRts = false;
+    const humanColors = new Set(), botColors = new Set();
+    this.state.players.forEach((p, sid) => {
+      const isBot = sid.startsWith("bot-");
+      if (p.role === "fps") {
+        if (isBot) botColors.add(p.colorIndex);
+        else { realFps++; humanColors.add(p.colorIndex); }
+      }
+      if (p.role === "rts" && !isBot) hasRts = true;
     });
 
-    if (requestedRole === "fps" && fpsCount >= 4) {
+    if (requestedRole === "fps" && realFps >= 4) {
       throw new Error("FPS slots full (4/4)");
     }
     if (requestedRole === "rts" && hasRts) {
@@ -492,17 +632,29 @@ class GameRoom extends Room {
       player.role = requestedRole;
     } else {
       // Legacy: auto-assign
-      player.role = fpsCount >= 4 ? "rts" : "fps";
+      player.role = realFps >= 4 ? "rts" : "fps";
     }
 
-    // Assign color index for FPS players
+    // Prefer a colour no one holds; otherwise take one back off a bot.
     if (player.role === "fps") {
+      let picked = -1;
       for (let i = 0; i < 4; i++) {
-        if (!usedColors.has(i)) { player.colorIndex = i; break; }
+        if (!humanColors.has(i) && !botColors.has(i)) { picked = i; break; }
+      }
+      if (picked < 0) {
+        for (let i = 0; i < 4; i++) if (botColors.has(i)) { picked = i; break; }
+      }
+      player.colorIndex = picked < 0 ? 0 : picked;
+
+      const botSid = `bot-${player.colorIndex}`;
+      if (this.state.players.has(botSid)) {
+        this.state.players.delete(botSid);
+        this._botSids = this._botSids.filter((b) => b !== botSid);
       }
     }
 
     this.state.players.set(client.sessionId, player);
+    this._electBotHost();
 
     // Notify client of their role and color
     client.send("roleAssign", { role: player.role, colorIndex: player.colorIndex });
@@ -565,13 +717,17 @@ class GameRoom extends Room {
   }
 
   _checkFpsRemaining() {
-    let fpsCount = 0;
-    this.state.players.forEach((p) => {
-      if (p.role === "fps") fpsCount++;
+    let hasRts = false;
+    this.state.players.forEach((p, sid) => {
+      if (p.role === "rts" && !sid.startsWith("bot-")) hasRts = true;
     });
     this._updateMetadata();
-    if (fpsCount === 0) {
+    // Bots can't hold a match open on their own, but a commander playing
+    // against bots has no human shooters by design.
+    if (this._realFpsCount() === 0 && !hasRts) {
       this._endGame("disconnect");
+    } else {
+      this._electBotHost();
     }
   }
 
@@ -586,21 +742,27 @@ class GameRoom extends Room {
 
   _broadcastPlayerCount() {
     let fpsCount = 0, hasRts = false;
-    this.state.players.forEach((p) => {
-      if (p.role === "fps") fpsCount++;
+    this.state.players.forEach((p, sid) => {
+      if (p.role === "fps" && !sid.startsWith("bot-")) fpsCount++;
       if (p.role === "rts") hasRts = true;
     });
-    this.broadcast("playerCount", { fpsCount, hasRts });
+    this.broadcast("playerCount", {
+      fpsCount, hasRts,
+      botCount: this._botSids.length,
+      maxBots: Math.max(0, 4 - fpsCount),
+    });
   }
 
   _startGame(mode) {
     this._gameMode = mode;
     this.state.phase = "playing";
 
-    // Scale biomass by number of FPS players for fairness
+    // Scale biomass by number of FPS players for fairness. Bots count — they
+    // shoot back, so the commander should get the matching biomass budget.
     let fpsCount = 0;
     this.state.players.forEach((p) => { if (p.role === "fps") fpsCount++; });
     this._fpsMultiplier = Math.max(1, fpsCount);
+    this._electBotHost(true);
     this._biomassMax = RTS.BIOMASS_MAX * this._fpsMultiplier;
     this.state.biomass = RTS.BIOMASS_START * this._fpsMultiplier;
     this._checkpointBonusGiven = false;
@@ -708,6 +870,7 @@ class GameRoom extends Room {
     if (this.state.phase === "ended") return;
     this.state.phase = "ended";
     this.state.winner = winner;
+    this._clearBots();
     if (this._tickInterval) {
       clearInterval(this._tickInterval);
       this._tickInterval = null;
