@@ -369,6 +369,24 @@ export async function initGame() {
     can: 0,
   };
 
+  // ── Recoil ────────────────────────────────────────────────────────────
+  // Each shot pushes `kickPitch/kickYaw`, which decays back to zero; the view
+  // damps toward that so the rise is smooth instead of a per-shot snap. Only
+  // RECOIL_CLIMB of each shot is baked into player.pitch permanently, so the
+  // muzzle still walks upward under sustained fire but the aim returns to
+  // roughly where the player was pointing once they stop.
+  const RECOIL_CLIMB = 0.28;  // fraction of each kick that sticks
+  const RECOIL_RISE  = 26;    // how fast the view catches up to the kick
+  const RECOIL_DECAY = 9;     // how fast the kick bleeds back to zero
+  const recoil = { pitch: 0, yaw: 0, kickPitch: 0, kickYaw: 0 };
+
+  function recoilTick(dt) {
+    recoil.kickPitch = THREE.MathUtils.damp(recoil.kickPitch, 0, RECOIL_DECAY, dt);
+    recoil.kickYaw   = THREE.MathUtils.damp(recoil.kickYaw, 0, RECOIL_DECAY, dt);
+    recoil.pitch = THREE.MathUtils.damp(recoil.pitch, recoil.kickPitch, RECOIL_RISE, dt);
+    recoil.yaw   = THREE.MathUtils.damp(recoil.yaw, recoil.kickYaw, RECOIL_RISE, dt);
+  }
+
   // ── Speed boost state ─────────────────────────────────────────────────
   let speedBoostActive = false;
   let speedBoostEnd = 0;
@@ -526,7 +544,7 @@ export async function initGame() {
   function collidePlayer() {
     const rawY = map.gy(player.pos.x, player.pos.z);
     // Smooth terrain height to prevent jitter on uneven ground
-    smoothGroundY += (rawY - smoothGroundY) * Math.min(1, 25 * lastDt);
+    smoothGroundY = THREE.MathUtils.damp(smoothGroundY, rawY, 25, lastDt);
     const y = smoothGroundY;
     if (player.pos.y < y + player.height) {
       player.pos.y = y + player.height;
@@ -1322,8 +1340,12 @@ export async function initGame() {
 
     const isAiming = input.pointer.aim || input.gamepad.aim || input.touch.aim;
     const recoilMul = isAiming ? 0.72 : 1;
-    player.pitch = clamp(player.pitch + weapon.rp * recoilMul, -1.45, 1.45);
-    player.yaw += (Math.random() * 2 - 1) * weapon.ry * (isAiming ? 0.55 : 1);
+    const kickP = weapon.rp * recoilMul;
+    const kickY = (Math.random() * 2 - 1) * weapon.ry * (isAiming ? 0.55 : 1);
+    recoil.kickPitch += kickP;
+    recoil.kickYaw += kickY;
+    player.pitch = clamp(player.pitch + kickP * RECOIL_CLIMB, -1.45, 1.45);
+    player.yaw += kickY * RECOIL_CLIMB;
     weaponView.kick();
     muzzleFlashLife = 0.055;
     spawnShell();
@@ -1889,8 +1911,8 @@ export async function initGame() {
         const m = dist > 0.8 ? 1 : 0;
         const spd = speedBoostActive ? en.s * 2 : en.s;
         const move = f.multiplyScalar(spd * m);
-        en.vel.x += (move.x - en.vel.x) * Math.min(1, en.acc * dt);
-        en.vel.z += (move.z - en.vel.z) * Math.min(1, en.acc * dt);
+        en.vel.x = THREE.MathUtils.damp(en.vel.x, move.x, en.acc, dt);
+        en.vel.z = THREE.MathUtils.damp(en.vel.z, move.z, en.acc, dt);
         en.mesh.position.x += en.vel.x * dt;
         en.mesh.position.z += en.vel.z * dt;
         en.jump -= dt;
@@ -2482,18 +2504,20 @@ export async function initGame() {
     }
 
     if (game.resp) {
-      player.pitch = THREE.MathUtils.lerp(player.pitch, 1.3, Math.min(1, 5 * dt));
-      player.height = THREE.MathUtils.lerp(player.height, 0.28, Math.min(1, 3 * dt));
-      game.deathRoll = THREE.MathUtils.lerp(game.deathRoll, 0.6, Math.min(1, 4 * dt));
+      player.pitch = THREE.MathUtils.damp(player.pitch, 1.3, 5, dt);
+      player.height = THREE.MathUtils.damp(player.height, 0.28, 3, dt);
+      game.deathRoll = THREE.MathUtils.damp(game.deathRoll, 0.6, 4, dt);
     }
+
+    recoilTick(dt);
 
     if (vrMode) {
       xr.rig.rotation.set(0, player.yaw, 0);
       camera.rotation.set(0, 0, 0);
     } else {
       camera.rotation.order = "YXZ";
-      camera.rotation.y = player.yaw;
-      camera.rotation.x = player.pitch;
+      camera.rotation.y = player.yaw + recoil.yaw;
+      camera.rotation.x = clamp(player.pitch + recoil.pitch, -1.5, 1.5);
       camera.rotation.z = game.deathRoll;
     }
 
@@ -2639,14 +2663,13 @@ export async function initGame() {
     const hs = Math.hypot(player.vel.x, player.vel.z);
     // Smooth ground factor to prevent bob jitter at terrain transitions
     const gfTarget = player.ground ? 1 : 0;
-    groundFactor += (gfTarget - groundFactor) * Math.min(1, 12 * dt);
+    groundFactor = THREE.MathUtils.damp(groundFactor, gfTarget, 12, dt);
     bob += (hs * (0.2 + 0.8 * groundFactor)) * dt * 2.8;
     const by = Math.sin(bob) * 0.035 * groundFactor;
     const bx = Math.cos(bob * 0.5) * 0.02 * groundFactor;
     // Smooth camera Y to prevent jitter on uneven terrain
     const camYTarget = player.pos.y + by;
-    const camLerp = Math.min(1, 20 * dt);
-    smoothCamY += (camYTarget - smoothCamY) * camLerp;
+    smoothCamY = THREE.MathUtils.damp(smoothCamY, camYTarget, 20, dt);
     if (vrMode) {
       xr.rig.position.set(player.pos.x, player.pos.y - player.height, player.pos.z);
     } else {
@@ -2658,7 +2681,7 @@ export async function initGame() {
 
     const aiming = input.pointer.aim || gp.aim || input.touch.aim;
     const fov = aiming ? 30 : sprint ? 100 : 94;
-    camera.fov += (fov - camera.fov) * Math.min(1, 12 * dt);
+    camera.fov = THREE.MathUtils.damp(camera.fov, fov, 12, dt);
     camera.updateProjectionMatrix();
     ui.setCrosshairAim(aiming, trapActive);
 
