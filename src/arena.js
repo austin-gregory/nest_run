@@ -7,6 +7,7 @@ import { createArenaWorld, ARENA_SPAWN_POINTS, FALL_THRESHOLD } from "./arenaWor
 import { createWeaponView } from "./weaponView.js";
 import { createArenaRoom, joinArenaRoom } from "./network.js";
 import { getUser, getDisplayName, getCachedCustomization } from "./supabase.js";
+import { createBackdrop, isBackdropSupported } from "./backdrop.js";
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -85,10 +86,33 @@ export async function initArena() {
   stars.frustumCulled = false;
   scene.add(stars);
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  // ── WebGPU backdrop ────────────────────────────────────────────────────
+  // Arena floats in space, so it gets the black hole. When it's running the
+  // scene clears to transparent and the sky image/starfield step aside;
+  // without WebGPU nothing changes and sky.png stays.
+  const useBackdrop = isBackdropSupported();
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: useBackdrop });
   renderer.setSize(innerWidth, innerHeight);
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   document.body.appendChild(renderer.domElement);
+
+  let backdrop = null;
+  if (useBackdrop) {
+    renderer.setClearColor(0x000000, 0);
+    scene.background = null;
+    stars.visible = false;          // the black hole draws its own starfield
+    scene.fog = new THREE.Fog(0x05070a, 40, 260);
+    backdrop = createBackdrop({ sceneName: "blackhole", gameCanvas: renderer.domElement });
+    backdrop.ready.then((ok) => {
+      if (ok) return;
+      // Fell back — put the original sky back exactly as it was.
+      renderer.setClearColor(0x000000, 1);
+      scene.background = skyTex;
+      stars.visible = true;
+      scene.fog = new THREE.Fog(0x2d1f16, 30, 220);
+    });
+  }
 
   // ── VR / WebXR setup ──────────────────────────────────────────────────
   const vrMode = new URLSearchParams(window.location.search).get("vr") === "1";
@@ -1185,6 +1209,9 @@ export async function initArena() {
     camera.getWorldPosition(stars.position);
     stars.rotation.y += STAR_SPIN * dt;
     starMat.uniforms.uTime.value = t;
+
+    // Sky turns with the player.
+    if (backdrop) backdrop.setView(player.yaw, -player.pitch);
 
     if (!game.win) game.elapsed = t - game.startTime;
 
