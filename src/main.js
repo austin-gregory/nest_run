@@ -1407,6 +1407,26 @@ export async function initGame() {
         en.flash = 0.1;
       }
     }
+
+    // Bugs bite back. Same rule aiTick() applies to the local player, on the
+    // bug's own attack cooldown, so bots aren't invulnerable escorts.
+    const biteReach = 1.5 * BUG_SCALE;
+    const dmgScale = 1 / (1 + enemies.length * 0.12);
+    for (const en of enemies) {
+      if (en._destroyed || en.dormant) continue;
+      if (en.botAtk === undefined) en.botAtk = 0;
+      en.botAtk = Math.max(0, en.botAtk - dt);
+      if (en.botAtk > 0) continue;
+      for (const bot of coopBots.values()) {
+        if (bot.dead) continue;
+        const d = Math.hypot(en.mesh.position.x - bot.x, en.mesh.position.z - bot.z);
+        if (d >= biteReach) continue;
+        en.botAtk = 0.75;
+        bot.hp -= (8 + Math.random() * 4) * dmgScale;
+        if (bot.hp <= 0) killCoopBot(bot);
+        break;
+      }
+    }
   }
 
   function updateHostStatus() {
@@ -2993,19 +3013,61 @@ export async function initGame() {
     btnPvpStart.addEventListener("click", () => {
       if (room && !btnPvpStart.disabled) room.send("requestStart", { mode: "pvp" });
     });
+    // ── Bot fill controls ──────────────────────────────────────────────
+    const botRow = document.createElement("div");
+    botRow.style.cssText = "display:flex;align-items:center;gap:12px;";
+    const botLabel = document.createElement("span");
+    botLabel.id = "wait-bot-count";
+    botLabel.textContent = "Bots: 0";
+    botLabel.style.cssText = "color:#ddcc00;font-size:18px;letter-spacing:2px;min-width:90px;text-align:center;";
+    const stepStyle = [
+      "width:44px", "height:44px", "font-size:24px", "font-family:monospace",
+      "background:rgba(255,255,255,.06)", "color:#fff",
+      "border:1px solid rgba(0,180,255,.3)", "border-radius:6px",
+      "cursor:pointer",
+    ].join(";");
+    const btnBotLess = document.createElement("button");
+    btnBotLess.id = "btn-bot-less";
+    btnBotLess.textContent = "−";
+    btnBotLess.style.cssText = stepStyle;
+    const btnBotMore = document.createElement("button");
+    btnBotMore.id = "btn-bot-more";
+    btnBotMore.textContent = "+";
+    btnBotMore.style.cssText = stepStyle;
+    let wantBots = 0, maxBots = 3;
+    function pushBots(n) {
+      wantBots = Math.max(0, Math.min(maxBots, n));
+      if (room) room.send("setBots", { count: wantBots });
+    }
+    btnBotLess.addEventListener("click", () => pushBots(wantBots - 1));
+    btnBotMore.addEventListener("click", () => pushBots(wantBots + 1));
+    botRow.append(btnBotLess, botLabel, btnBotMore);
+
     const waitSub = document.createElement("p");
     waitSub.textContent = "Waiting for players to join...";
     waitSub.style.cssText = "color:#888;font-size:14px;";
-    waitingOverlay.append(waitPlayerCount, btnCoopStart, btnPvpStart, waitSub);
+    waitingOverlay.append(waitPlayerCount, botRow, btnCoopStart, btnPvpStart, waitSub);
     document.body.appendChild(waitingOverlay);
-    waitingGpNav = gamepadMenuNav([btnCoopStart, btnPvpStart]);
+    waitingGpNav = gamepadMenuNav([btnBotLess, btnBotMore, btnCoopStart, btnPvpStart]);
 
     // Listen for player count updates
     room.onMessage("playerCount", (data) => {
       const el = document.getElementById("wait-player-count");
       if (el) el.textContent = "Shooters: " + data.fpsCount + "/4";
+      // Server is authoritative on how many bots actually fit.
+      wantBots = data.botCount || 0;
+      maxBots = Math.max(0, (data.maxBots != null ? data.maxBots : 4) - 1);
+      const botEl = document.getElementById("wait-bot-count");
+      if (botEl) botEl.textContent = "Bots: " + wantBots;
+      const lessBtn = document.getElementById("btn-bot-less");
+      const moreBtn = document.getElementById("btn-bot-more");
+      if (lessBtn) lessBtn.disabled = wantBots <= 0;
+      if (moreBtn) moreBtn.disabled = wantBots >= maxBots;
       const coopBtn = document.getElementById("btn-coop-start");
-      if (coopBtn) coopBtn.textContent = data.fpsCount >= 2 ? "Start Co-op" : "Start Solo";
+      if (coopBtn) {
+        const team = data.fpsCount + wantBots;
+        coopBtn.textContent = team >= 2 ? "Start Co-op" : "Start Solo";
+      }
       const pvpBtn = document.getElementById("btn-pvp-start");
       if (pvpBtn) {
         if (data.hasRts) {

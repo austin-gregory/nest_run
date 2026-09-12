@@ -35,6 +35,7 @@ const ESCORT_RADIUS    = 14;   // how far from the cart bots like to sit
 const ENGAGE_RANGE     = 55;   // start shooting at bugs within this
 const CHASE_RANGE      = 26;   // move toward a bug closer than this
 const KEEP_AWAY        = 6;    // back off if a bug gets closer than this
+const LEASH            = 38;  // never give ground further than this from the cart
 const SEPARATION       = 4.5;  // personal space between bots/allies
 const STRAFE_INTERVAL  = [0.7, 2.0];
 
@@ -153,6 +154,17 @@ export function tickCoopBot(bot, dt, ctx) {
     goalZ = cart.z + Math.sin(ang) * ESCORT_RADIUS;
   } else {
     goalX = bot.x; goalZ = bot.z;
+  }
+
+  // Backing away from bugs is fine, but bugs keep coming — without a leash the
+  // bot retreats across the map and abandons the cart it's meant to escort.
+  if (cart) {
+    const gdx = goalX - cart.x, gdz = goalZ - cart.z;
+    const gd = Math.hypot(gdx, gdz);
+    if (gd > LEASH) {
+      goalX = cart.x + (gdx / gd) * LEASH;
+      goalZ = cart.z + (gdz / gd) * LEASH;
+    }
   }
 
   let wishX = goalX - bot.x;

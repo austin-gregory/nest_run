@@ -3,6 +3,8 @@ import { WORLD, RTS } from "./constants.js";
 import { createWorld } from "./world.js";
 import { connectToGame, createRoom, joinRoom } from "./network.js";
 import { recordGame } from "./supabase.js";
+import { createCoopBot, tickCoopBot, killCoopBot } from "./coopBot.js";
+import { createBugSimEntry, stepBug } from "./bugSim.js";
 
 export async function initRTS() {
   const overlay = document.getElementById("rts-overlay");
@@ -650,6 +652,15 @@ export async function initRTS() {
     });
   });
 
+  // ── Commander-hosted simulation state ──────────────────────────────────
+  // Declared ahead of the network block because its message handlers close
+  // over these.
+  const coopBots = new Map();   // sid -> bot instance
+  const bugSim = new Map();     // enemy id -> headless bug
+  let botHostSid = null;
+  let amBotHost = false;
+  let gameRunning = false;
+
   // ── Network connection ─────────────────────────────────────────────────
   const urlParams = new URLSearchParams(window.location.search);
   const paramRoomId = urlParams.get("roomId");
@@ -658,6 +669,7 @@ export async function initRTS() {
   const paramRole = urlParams.get("role") || "rts";
 
   let room = null;
+  let botWant = 0, botMax = 4;
   overlayStatus.textContent = "Connecting to server...";
 
   try {
@@ -673,6 +685,22 @@ export async function initRTS() {
     console.log("[rts] Connected as Commander");
     overlayStatus.textContent = "Waiting for Shooter to start...";
 
+    // ── Bot fill + solo start ───────────────────────────────────────────
+    const setBots = (n) => {
+      botWant = Math.max(0, Math.min(botMax, n));
+      room.send("setBots", { count: botWant });
+    };
+    const lessBtn = document.getElementById("rts-bot-less");
+    const moreBtn = document.getElementById("rts-bot-more");
+    const startBotsBtn = document.getElementById("rts-start-bots");
+    if (lessBtn) lessBtn.addEventListener("click", () => setBots(botWant - 1));
+    if (moreBtn) moreBtn.addEventListener("click", () => setBots(botWant + 1));
+    if (startBotsBtn) {
+      startBotsBtn.addEventListener("click", () => {
+        if (!startBotsBtn.disabled) room.send("requestStartCommander");
+      });
+    }
+
     room.onMessage("roleAssign", (data) => {
       if (data.role === "fps") {
         console.log("[rts] Assigned FPS role, redirecting...");
@@ -682,8 +710,42 @@ export async function initRTS() {
       }
     });
 
+    room.onMessage("botHost", (data) => {
+      botHostSid = data && data.sid ? data.sid : null;
+      amBotHost = !!(room && botHostSid === room.sessionId);
+      if (amBotHost) console.log("[rts] hosting bot + bug simulation");
+    });
+
+    room.onMessage("playerCount", (data) => {
+      botWant = data.botCount || 0;
+      botMax = data.maxBots != null ? data.maxBots : 4;
+      const label = document.getElementById("rts-bot-count");
+      if (label) label.textContent = "Bot shooters: " + botWant;
+      const less = document.getElementById("rts-bot-less");
+      const more = document.getElementById("rts-bot-more");
+      if (less) less.disabled = botWant <= 0;
+      if (more) more.disabled = botWant >= botMax;
+
+      const startBtn = document.getElementById("rts-start-bots");
+      if (startBtn) {
+        const ready = botWant > 0;
+        startBtn.disabled = !ready;
+        startBtn.style.background = ready ? "#c0000a" : "#333";
+        startBtn.style.color = ready ? "#fff" : "#666";
+        startBtn.style.cursor = ready ? "pointer" : "not-allowed";
+      }
+      if (data.fpsCount > 0) {
+        overlayStatus.textContent = "Waiting for Shooter to start...";
+      } else {
+        overlayStatus.textContent = botWant > 0
+          ? "Ready — " + botWant + " bot shooter" + (botWant === 1 ? "" : "s")
+          : "No shooters. Add bots to play solo.";
+      }
+    });
+
     room.onMessage("gameStart", (data) => {
       console.log("[rts] Game started! Mode:", data.mode);
+      gameRunning = true;
       if (overlay && overlay.parentNode) overlay.style.display = "none";
       // Scale biomass max by FPS player count
       let fc = 0;
@@ -755,6 +817,7 @@ export async function initRTS() {
     });
 
     room.onMessage("gameOver", (data) => {
+      gameRunning = false;
       showGameOverRTS(data.winner);
     });
 
@@ -863,6 +926,125 @@ export async function initRTS() {
     document.body.appendChild(ov);
   }
 
+  // ── Commander-hosted simulation ────────────────────────────────────────
+  // With no human shooters there is no FPS client to run the bugs or the bots,
+  // so the server elects this client as host and we simulate both here.
+  function syncHostedEntities() {
+    if (!room || !room.state) return;
+
+    const liveBots = new Set();
+    room.state.players.forEach((p, sid) => {
+      if (!sid.startsWith("bot-")) return;
+      liveBots.add(sid);
+      if (!coopBots.has(sid)) {
+        const index = parseInt(sid.slice(4), 10) || 0;
+        coopBots.set(sid, createCoopBot(index));
+      }
+    });
+    for (const sid of [...coopBots.keys()]) {
+      if (!liveBots.has(sid)) coopBots.delete(sid);
+    }
+
+    const liveBugs = new Set();
+    room.state.enemies.forEach((e, id) => {
+      if (!e.alive) return;
+      liveBugs.add(id);
+      let b = bugSim.get(id);
+      if (!b) {
+        b = createBugSimEntry(id, e.x, e.z, e.speed, e.hp, e.bugType);
+        b.y = map.gy(e.x, e.z);
+        bugSim.set(id, b);
+      }
+      b.dormant = !!e.dormant;
+    });
+    for (const id of [...bugSim.keys()]) {
+      if (!liveBugs.has(id)) bugSim.delete(id);
+    }
+  }
+
+  let hostSendTimer = 0;
+  function hostTick(dt) {
+    if (!amBotHost || !gameRunning) return;
+    syncHostedEntities();
+    if (coopBots.size === 0 && bugSim.size === 0) return;
+
+    // Bugs chase the bots (the only shooters on the field).
+    const botTargets = [];
+    for (const b of coopBots.values()) {
+      if (!b.dead) botTargets.push({ x: b.x, z: b.z });
+    }
+    const cartPos = map.car ? map.car.position : null;
+    for (const bug of bugSim.values()) {
+      stepBug(bug, dt, { map, targets: botTargets, fallbackTarget: cartPos });
+    }
+
+    // Bots fight back.
+    const enemyViews = [];
+    for (const bug of bugSim.values()) {
+      if (bug.dormant) continue;
+      enemyViews.push({
+        id: bug.id, x: bug.x, y: bug.y, z: bug.z,
+        hp: bug.hp, alive: true, dormant: false, _src: bug,
+      });
+    }
+    const allies = [];
+    for (const b of coopBots.values()) allies.push({ x: b.x, z: b.z });
+
+    const ctx = {
+      map, enemies: enemyViews, allies, cartPos,
+      onKill: (bot, tgt) => {
+        const bug = tgt._src;
+        if (!bug) return;
+        bugSim.delete(bug.id);
+        room.send("enemyKilled", { id: bug.id });
+      },
+    };
+    for (const bot of coopBots.values()) tickCoopBot(bot, dt, ctx);
+    for (const v of enemyViews) if (v._src) v._src.hp = v.hp;
+
+    // Bugs biting a bot. Mirrors the player-damage rule in main.js aiTick():
+    // a 0.75s bite cooldown, 8-12 damage, scaled down as the swarm grows, at
+    // 1.5 * BUG_SCALE reach.
+    const BITE_REACH = 1.5 * 3.0;
+    const dmgScale = 1 / (1 + bugSim.size * 0.12);
+    for (const bug of bugSim.values()) {
+      if (bug.dormant) continue;
+      bug.atk = Math.max(0, (bug.atk || 0) - dt);
+      if (bug.atk > 0) continue;
+      for (const bot of coopBots.values()) {
+        if (bot.dead) continue;
+        if (Math.hypot(bug.x - bot.x, bug.z - bot.z) >= BITE_REACH) continue;
+        bug.atk = 0.75;
+        bot.hp -= (8 + Math.random() * 4) * dmgScale;
+        if (bot.hp <= 0) killCoopBot(bot);
+        break;
+      }
+    }
+
+    // Publish at the same 10 Hz the FPS host uses.
+    hostSendTimer += dt;
+    if (hostSendTimer < 0.1) return;
+    hostSendTimer = 0;
+
+    if (coopBots.size > 0) {
+      const bots = [];
+      for (const b of coopBots.values()) {
+        bots.push({
+          sid: b.sid, x: b.x, y: b.y, z: b.z,
+          yaw: b.yaw, pitch: b.pitch, hp: b.hp, ground: b.ground,
+        });
+      }
+      room.send("botUpdate", bots);
+    }
+    if (bugSim.size > 0) {
+      const positions = [];
+      for (const bug of bugSim.values()) {
+        positions.push({ id: bug.id, x: bug.x, y: bug.y, z: bug.z, yaw: bug.yaw });
+      }
+      room.send("enemyPositions", positions);
+    }
+  }
+
   // ── Render loop ────────────────────────────────────────────────────────
   let last = performance.now() / 1000;
   function loop() {
@@ -870,6 +1052,8 @@ export async function initRTS() {
     const t = performance.now() / 1000;
     const dt = Math.min(0.033, t - last);
     last = t;
+
+    hostTick(dt);
 
     // Camera panning
     let px = 0, pz = 0;

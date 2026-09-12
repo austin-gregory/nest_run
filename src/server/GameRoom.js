@@ -570,6 +570,7 @@ class GameRoom extends Room {
       this._botSids.push(sid);
     }
 
+    this._electBotHost(true);
     this._updateMetadata();
     this._broadcastPlayerCount();
   }
@@ -582,7 +583,7 @@ class GameRoom extends Room {
 
   // Lowest-colorIndex human shooter hosts; with no human shooters the
   // commander does, so a commander-vs-bots match still has a simulator.
-  _electBotHost() {
+  _electBotHost(force) {
     let best = null, bestColor = Infinity, rts = null;
     this.state.players.forEach((p, sid) => {
       if (sid.startsWith("bot-")) return;
@@ -590,7 +591,9 @@ class GameRoom extends Room {
       if (p.role === "rts") rts = sid;
     });
     const host = best || rts;
-    if (host !== this._botHost) {
+    // `force` re-announces even when the host is unchanged — a client that was
+    // still connecting during the first election would otherwise never hear it.
+    if (force || host !== this._botHost) {
       this._botHost = host;
       this.broadcast("botHost", { sid: host, bots: this._botSids.slice() });
     }
@@ -757,7 +760,7 @@ class GameRoom extends Room {
     let fpsCount = 0;
     this.state.players.forEach((p) => { if (p.role === "fps") fpsCount++; });
     this._fpsMultiplier = Math.max(1, fpsCount);
-    this._electBotHost();
+    this._electBotHost(true);
     this._biomassMax = RTS.BIOMASS_MAX * this._fpsMultiplier;
     this.state.biomass = RTS.BIOMASS_START * this._fpsMultiplier;
     this._checkpointBonusGiven = false;
