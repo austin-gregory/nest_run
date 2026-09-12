@@ -39,7 +39,12 @@ export const ASSETS = {
   // Tune this to fit your imported model in first-person view.
   gunScale: 0.14,
   // Euler rotation in radians to orient imported weapon model.
-  gunRotation: { x: 0, y: Math.PI + 0.11, z: 0 },
+  gunRotation: { x: 0, y: Math.PI / 2 + 0.11, z: 0 },
+  // Positional nudge applied to the model inside the view. The current smg.glb
+  // is an arm rig with the gun parented high and off-axis inside it; this seats
+  // it where the old bare-gun model sat, and cancels the swing the yaw above
+  // introduces by rotating about the rig origin rather than the gun.
+  gunOffset: { x: -0.346, y: -1.23, z: 0.011 },
 };
 
 export const FORCE_GUN_ASSETS = {

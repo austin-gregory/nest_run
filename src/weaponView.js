@@ -39,6 +39,13 @@ export async function createWeaponView(scene, config) {
           config.gunRotation.z ?? 0
         );
       }
+      if (config.gunOffset) {
+        model.position.set(
+          config.gunOffset.x ?? 0,
+          config.gunOffset.y ?? 0,
+          config.gunOffset.z ?? 0
+        );
+      }
       gun.add(model);
 
       if (config.gunTextureUrl) {
