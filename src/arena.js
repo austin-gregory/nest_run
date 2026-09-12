@@ -27,11 +27,14 @@ export async function initArena() {
   const ui = createUI();
 
   const scene = new THREE.Scene();
-  const skyTex = new THREE.TextureLoader().load("./assets/sky.png");
+  // Arena's sky is baked from the WebGPU black hole shaders (tools/bake-backdrop.mjs)
+  // into an equirect PNG, so it needs no WebGPU at runtime — Chromium hands out
+  // no adapter when Vulkan is disabled, which is common on Linux.
+  const skyTex = new THREE.TextureLoader().load("./assets/blackhole-sky.png");
   skyTex.colorSpace = THREE.SRGBColorSpace;
   skyTex.mapping = THREE.EquirectangularReflectionMapping;
   scene.background = skyTex;
-  scene.fog = new THREE.Fog(0x2d1f16, 30, 220);
+  scene.fog = new THREE.Fog(0x05070a, 40, 260);
 
   // ── Procedural twinkling starfield (layered in front of the sky image) ──
   const STAR_COUNT = 2200;
@@ -92,25 +95,25 @@ export async function initArena() {
   // without WebGPU nothing changes and sky.png stays.
   const useBackdrop = isBackdropSupported();
 
+  // alpha has to be requested up front — a WebGL context cannot gain it later,
+  // and the live backdrop needs to show through when it swaps in.
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: useBackdrop });
   renderer.setSize(innerWidth, innerHeight);
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   document.body.appendChild(renderer.domElement);
 
+  // The live WebGPU backdrop is an upgrade over the baked sky — animated, and
+  // the disk actually turns as you move. It only swaps in once it is genuinely
+  // drawing, so a machine without a WebGPU adapter simply keeps the baked sky
+  // and looks the same as before. Opt in with ?backdrop=live.
   let backdrop = null;
-  if (useBackdrop) {
-    renderer.setClearColor(0x000000, 0);
-    scene.background = null;
-    stars.visible = false;          // the black hole draws its own starfield
-    scene.fog = new THREE.Fog(0x05070a, 40, 260);
+  if (useBackdrop && new URLSearchParams(location.search).get("backdrop") === "live") {
     backdrop = createBackdrop({ sceneName: "blackhole", gameCanvas: renderer.domElement });
     backdrop.ready.then((ok) => {
-      if (ok) return;
-      // Fell back — put the original sky back exactly as it was.
-      renderer.setClearColor(0x000000, 1);
-      scene.background = skyTex;
-      stars.visible = true;
-      scene.fog = new THREE.Fog(0x2d1f16, 30, 220);
+      if (!ok) { backdrop = null; return; }
+      renderer.setClearColor(0x000000, 0);
+      scene.background = null;      // the live shader draws its own sky and stars
+      stars.visible = false;
     });
   }
 
