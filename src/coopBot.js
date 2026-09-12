@@ -10,8 +10,11 @@
 import { WORLD } from "./constants.js";
 
 const GRAVITY      = 22;
-const WALK_SPEED   = 5.4;
-const SPRINT_SPEED = 7.6;
+// Below the player's 6.8 / 9.6, but sprint must clear the cart's 7.5/s or a
+// bot respawning at the track start can never catch a cart others are pushing.
+const WALK_SPEED   = 6.0;
+const SPRINT_SPEED = 9.0;
+const SPRINT_DIST  = 14;  // sprint when this far off station
 const ACCEL        = 40;
 const FRICTION     = 10;
 const PLAYER_HEIGHT = 1.75;
@@ -31,11 +34,13 @@ const AIM_LERP_RATE    = 5;     // rad/s — visibly slower than a human flick
 const REACTION_TIME    = [0.18, 0.45]; // delay before opening fire on a new target
 
 // ── Positioning ──────────────────────────────────────────────────────────────
-const ESCORT_RADIUS    = 14;   // how far from the cart bots like to sit
+// Bots must stand INSIDE the cart's push radius to actually move it, so the
+// escort ring is a fraction of that radius rather than a fixed distance.
+const ESCORT_FRACTION  = 0.55; // how far into the push radius bots hold station
+const DEFAULT_CART_RAD = 8.2;  // map.cart.rad
 const ENGAGE_RANGE     = 55;   // start shooting at bugs within this
-const CHASE_RANGE      = 26;   // move toward a bug closer than this
-const KEEP_AWAY        = 6;    // back off if a bug gets closer than this
-const LEASH            = 38;  // never give ground further than this from the cart
+const KEEP_AWAY        = 7;    // sidestep a bug that closes inside this
+const LEASH            = 16;   // never end up further than this from the cart
 const SEPARATION       = 4.5;  // personal space between bots/allies
 const STRAFE_INTERVAL  = [0.7, 2.0];
 
@@ -60,6 +65,7 @@ export function createCoopBot(index, name) {
     respawnTimer: 0,
 
     targetId: null,
+    pushingCart: false,
     shootCooldown: 0,
     reactionTimer: 0,
     strafeDir: Math.random() < 0.5 ? 1 : -1,
@@ -135,29 +141,35 @@ export function tickCoopBot(bot, dt, ctx) {
   const tDist = target ? Math.hypot(target.x - bot.x, target.z - bot.z) : Infinity;
 
   // ── Where to stand ────────────────────────────────────────────────────────
-  // Default job is escorting the cart; a close bug pulls them off it.
+  // Holding the cart IS the job — it only moves while someone stands inside its
+  // push radius. Bots reach 55 units, so they never need to close on a bug;
+  // chasing one just walks them off the cart and stalls the escort.
   const cart = ctx.cartPos || (map && map.car ? map.car.position : null);
+  const cartRad = ctx.cartRadius || (map && map.cart ? map.cart.rad : DEFAULT_CART_RAD);
   let goalX, goalZ;
 
-  if (target && tDist < CHASE_RANGE) {
-    if (tDist < KEEP_AWAY) {
-      goalX = bot.x - (target.x - bot.x);
-      goalZ = bot.z - (target.z - bot.z);
-    } else {
-      goalX = target.x;
-      goalZ = target.z;
-    }
-  } else if (cart) {
-    // Spread out around the cart rather than all standing on it.
+  if (cart) {
+    // Spread around the cart but stay within its push radius so they drive it.
     const ang = (bot.index / Math.max(1, WORLD.SPAWN_POINTS.length)) * Math.PI * 2;
-    goalX = cart.x + Math.cos(ang) * ESCORT_RADIUS;
-    goalZ = cart.z + Math.sin(ang) * ESCORT_RADIUS;
+    const ring = cartRad * ESCORT_FRACTION;
+    goalX = cart.x + Math.cos(ang) * ring;
+    goalZ = cart.z + Math.sin(ang) * ring;
   } else {
     goalX = bot.x; goalZ = bot.z;
   }
 
-  // Backing away from bugs is fine, but bugs keep coming — without a leash the
-  // bot retreats across the map and abandons the cart it's meant to escort.
+  // A bug in their face nudges them off station, but only far enough to make
+  // room — the leash below pulls them straight back onto the cart.
+  if (target && tDist < KEEP_AWAY) {
+    const nx = (bot.x - target.x) / Math.max(0.001, tDist);
+    const nz = (bot.z - target.z) / Math.max(0.001, tDist);
+    const away = KEEP_AWAY - tDist;
+    goalX += nx * away;
+    goalZ += nz * away;
+  }
+
+  // Bugs keep coming, so without a leash the sidestep above compounds and the
+  // bot drifts off the cart it's meant to be pushing.
   if (cart) {
     const gdx = goalX - cart.x, gdz = goalZ - cart.z;
     const gd = Math.hypot(gdx, gdz);
@@ -174,7 +186,7 @@ export function tickCoopBot(bot, dt, ctx) {
   else { wishX = 0; wishZ = 0; }
 
   // Strafe while fighting so they aren't stationary targets.
-  if (target && tDist < CHASE_RANGE && goalDist < CHASE_RANGE) {
+  if (target && tDist < ENGAGE_RANGE && goalDist < 3) {
     const fx = wishX, fz = wishZ;
     wishX += -fz * bot.strafeDir * 0.6;
     wishZ += fx * bot.strafeDir * 0.6;
@@ -219,7 +231,10 @@ export function tickCoopBot(bot, dt, ctx) {
   }
 
   // ── Movement ──────────────────────────────────────────────────────────────
-  const speed = (!target && goalDist > 20) ? SPRINT_SPEED : WALK_SPEED;
+  // Sprint on distance alone. Gating this on "no target" meant any bug within
+  // the 55-unit engage range pinned them to walking speed, which is slower than
+  // the cart — so a bot that fell behind never rejoined it.
+  const speed = goalDist > SPRINT_DIST ? SPRINT_SPEED : WALK_SPEED;
 
   const hSpeed = Math.hypot(bot.vx, bot.vz);
   if (hSpeed > 1e-4) {
@@ -273,6 +288,9 @@ export function tickCoopBot(bot, dt, ctx) {
       }
     }
   }
+
+  // Hosts read this to decide whether the cart should advance.
+  bot.pushingCart = !!cart && Math.hypot(cart.x - bot.x, cart.z - bot.z) <= cartRad;
 
   // ── Shooting ──────────────────────────────────────────────────────────────
   if (target && bot.reactionTimer <= 0 && bot.shootCooldown <= 0 && tDist <= SHOT_RANGE) {

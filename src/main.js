@@ -1877,18 +1877,30 @@ export async function initGame() {
   function carTick(dt) {
     const dx = player.pos.x - map.car.position.x;
     const dz = player.pos.z - map.car.position.z;
-    const near = Math.hypot(dx, dz) <= map.cart.rad;
+    const playerNear = Math.hypot(dx, dz) <= map.cart.rad;
+
+    // Bots we simulate push the cart too, otherwise they just tag along behind
+    // whatever a human is doing — and in a commander-vs-bots match nothing
+    // would ever advance it.
+    let botNear = false;
+    if (amBotHost) {
+      for (const b of coopBots.values()) {
+        if (!b.dead && b.pushingCart) { botNear = true; break; }
+      }
+    }
+    const near = playerNear || botNear;
 
     if (!game.win) {
       if (near && !game.resp) {
         map.cart.p += (map.cart.fwd * dt) / map.trackLength;
         ui.setStatus("Escorting car to nest");
-      } else if (game.resp && !isMultiplayer) {
-        // Only roll back in singleplayer — in multiplayer another player may be pushing
+      } else if (game.resp && !isMultiplayer && !botNear) {
+        // Only roll back in singleplayer — in multiplayer another player may be
+        // pushing, and a bot of ours holding the cart counts as a pusher.
         map.cart.p -= (map.cart.back * dt) / map.trackLength;
         ui.setStatus("Car rolling back - spawn rate rising");
-      } else if (!near && !game.resp) {
-        ui.setStatus("Get closer");
+      } else if (!playerNear && !game.resp) {
+        ui.setStatus(botNear ? "Bots escorting car to nest" : "Get closer");
       }
     }
 

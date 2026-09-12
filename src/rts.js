@@ -372,6 +372,7 @@ export async function initRTS() {
     const angle = Math.atan2(tan.x, tan.z);
     mesh.position.set(pt.x, 5, pt.z);
     mesh.rotation.y = angle;
+    mesh.userData.progress = progress;
     scene.add(mesh);
     wallMarkers.set(id, mesh);
   }
@@ -448,8 +449,11 @@ export async function initRTS() {
     const s = t % 60;
     timeVal.textContent = m + ":" + String(s).padStart(2, "0");
 
-    // Update cart position on map
-    map.cart.p = state.cartProgress;
+    // Update cart position on map. While hosting we're the one advancing it, so
+    // take the max — the server's echo lags a tick behind our local value.
+    map.cart.p = amBotHost
+      ? Math.max(map.cart.p, state.cartProgress)
+      : state.cartProgress;
     map.setCar();
   }
 
@@ -1021,6 +1025,25 @@ export async function initRTS() {
       }
     }
 
+    // Advance the cart when a bot is inside its push radius. Without this the
+    // commander's match never progresses — there is no FPS client running
+    // carTick() to move it.
+    let botPushing = false;
+    for (const b of coopBots.values()) {
+      if (!b.dead && b.pushingCart) { botPushing = true; break; }
+    }
+    if (botPushing) {
+      map.cart.p += (map.cart.fwd * dt) / map.trackLength;
+      for (const mesh of wallMarkers.values()) {
+        const wp = mesh.userData.progress;
+        if (wp !== undefined && map.cart.p >= wp - 0.005) {
+          map.cart.p = Math.min(map.cart.p, wp - 0.005);
+        }
+      }
+      map.cart.p = Math.max(0, Math.min(1, map.cart.p));
+      map.setCar();
+    }
+
     // Publish at the same 10 Hz the FPS host uses.
     hostSendTimer += dt;
     if (hostSendTimer < 0.1) return;
@@ -1043,6 +1066,8 @@ export async function initRTS() {
       }
       room.send("enemyPositions", positions);
     }
+
+    room.send("playerUpdate", { cartProgress: map.cart.p });
   }
 
   // ── Render loop ────────────────────────────────────────────────────────
