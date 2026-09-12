@@ -65,7 +65,11 @@ fn volumeSample(point: vec3f, rayVelocity: vec3f) -> vec4f {
   if (radius <= ISCO || radius >= DISK_OUTER || height > 0.42) { return vec4f(0.0); }
 
   // Rotated Cartesian turbulence avoids a polar branch-cut seam.
-  let omega = 0.42 / pow(radius, 1.5);
+  // Faster than the live shader's 0.42. This variant only ever feeds the frame
+  // bake, so orbital speed is a legibility knob, not a physical claim: at the
+  // original rate the disk's bright structure is fixed by geometry and only the
+  // turbulence shimmers, which read as a still image.
+  let omega = 1.15 / pow(radius, 1.5);
   let swirl = 2.2 * log(radius);
   let ang = params.time * omega + swirl;
   let c = cos(ang);
@@ -74,7 +78,11 @@ fn volumeSample(point: vec3f, rayVelocity: vec3f) -> vec4f {
   let broad = fbm(rc * 0.9 + vec2f(0.0, params.time * 0.02));
   let detail = fbm(rc * 2.6 + broad * 1.5);
   let rings = 0.5 + 0.5 * sin(radius * 8.5 + broad * 6.0);
-  let clumps = smoothstep(0.26, 0.84, broad * 0.72 + detail * 0.46 + rings * 0.22);
+  // Much tighter than the live shader's (0.26, 0.84). The disk's bright shape is
+  // fixed by Doppler beaming and radial falloff, so the turbulence is the only
+  // part that can move — at low contrast it shimmers invisibly. Carving hard
+  // here turns it into dark lanes that visibly sweep around the disk.
+  let clumps = smoothstep(0.42, 0.60, broad * 0.72 + detail * 0.46 + rings * 0.22);
 
   let thickness = mix(0.05, 0.24, smoothstep(ISCO, DISK_OUTER, radius));
   let vertical = exp(-pow(height / thickness, 2.0) * 3.4);
@@ -108,9 +116,9 @@ fn volumeSample(point: vec3f, rayVelocity: vec3f) -> vec4f {
 @fragment fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
   let yaw = params.pointer.x;
   let pitch = clamp(params.pointer.y, -1.319, 1.319);
-  // Closer than the interactive example's 21.0: as a sky this should dominate
-  // the view you turn toward, not sit as a distant speck.
-  let orbitRadius = 12.0;
+  // Between the example's 21.0 (a distant speck) and 12.0 (which dominated the
+  // sky). Further out also means a smaller apparent size.
+  let orbitRadius = 17.0;
   let cameraPosition = vec3f(
     sin(yaw) * cos(pitch) * orbitRadius,
     sin(pitch) * orbitRadius,

@@ -35,8 +35,10 @@ export async function initArena() {
   const sky = createSkyCycle(scene, {
     frames: skyFrames("./assets/blackhole-sky", 6),
     radius: 450,          // inside the camera's 600 far plane
-    hold: 3.0,
-    fade: 3.0,
+    // Barely any hold: the disk's motion is subtle, so it needs to be moving
+    // continuously rather than settling between fades.
+    hold: 0.3,
+    fade: 4.0,
   });
   scene.fog = new THREE.Fog(0x05070a, 40, 260);
 

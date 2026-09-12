@@ -34,10 +34,12 @@ export async function initGame() {
   // Chromium hands out no WebGPU adapter when Vulkan is disabled. Palette
   // deliberately sits with the 0x2d1f16 fog rather than fighting it.
   const sky = createSkyCycle(scene, {
-    frames: skyFrames("./assets/ember-sky", 6),
+    frames: skyFrames("./assets/ember-sky", 5),
     radius: 700,          // inside the camera's 900 far plane
-    hold: 3.0,
-    fade: 3.0,
+    // Barely any hold: crossfading almost continuously reads as drift, whereas
+    // resting on a frame then fading reads as the sky stepping.
+    hold: 0.4,
+    fade: 5.0,
   });
   scene.fog = new THREE.Fog(0x2d1f16, 26, 450);
 

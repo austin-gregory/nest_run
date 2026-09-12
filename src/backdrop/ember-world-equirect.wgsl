@@ -24,7 +24,7 @@ const PI: f32 = 3.14159265359;
 // the skyline and is visible from eye level without looking straight up.
 const PLANET_DIR: vec3f = vec3f(0.34, 0.45, 0.93);
 const PLANET_DIST: f32 = 10.0;
-const PLANET_RADIUS: f32 = 3.1;
+const PLANET_RADIUS: f32 = 2.2;
 
 // Small cold moon on the opposite side for depth.
 const MOON_DIR: vec3f = vec3f(-0.72, 0.33, -0.61);
@@ -146,13 +146,13 @@ fn shadeMolten(hitPoint: vec3f, centre: vec3f) -> vec3f {
   let t = params.time;
 
   // Slow creep so a set of bakes at different times gives different flow.
-  let domain = normal * 2.3 + vec3f(0.0, 0.0, t * 0.03);
-  let plates = ridged3(domain * 1.5, 5);
-  let crust = fbm3(domain * 3.1, 5);
+  let domain = normal * 1.7 + vec3f(0.0, 0.0, t * 0.03);
+  let plates = ridged3(domain * 1.1, 4);
+  let crust = fbm3(domain * 2.1, 4);
 
   // Cracks: the gaps between plates run hot.
-  let crack = smoothstep(0.58, 0.92, plates);
-  let deepCrack = smoothstep(0.72, 0.98, plates);
+  let crack = smoothstep(0.52, 0.95, plates);
+  let deepCrack = smoothstep(0.68, 1.0, plates);
   let heat = clamp(crack * 0.75 + deepCrack * 0.55 - crust * 0.22, 0.0, 1.0);
 
   let molten = blackbody(heat);
