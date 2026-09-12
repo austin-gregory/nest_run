@@ -3,6 +3,10 @@
 //   npm i --no-save vgpu pngjs
 //   node tools/bake-backdrop.mjs [width] [yaw] [pitch] [outPath]
 //
+// BACKDROP_SHADER picks the scene (default black-hole-equirect.wgsl):
+//   BACKDROP_SHADER=ember-world-equirect.wgsl \
+//     node tools/bake-backdrop.mjs 2048 0 0 assets/ember-sky.png
+//
 // Needed because runtime WebGPU is not available everywhere — Chromium on Linux
 // hands out no adapter when Vulkan is disabled, even though chrome://gpu
 // reports "WebGPU: Hardware accelerated". A baked sky drops into THREE's
@@ -22,6 +26,7 @@ const W = Number(process.argv[2] ?? 1024);
 const H = W / 2;
 const yaw = Number(process.argv[3] ?? 0.6);
 const pitch = Number(process.argv[4] ?? 0.28);
+const SHADER = process.env.BACKDROP_SHADER ?? "black-hole-equirect.wgsl";
 const out = process.argv[5] ?? new URL("../assets/blackhole-sky.png", import.meta.url).pathname;
 
 const BLURS = [
@@ -42,7 +47,7 @@ const bloom = [
 ];
 const outT = target(gpu, { size: [W, H] });
 
-const scene = effect(gpu, read("black-hole-equirect.wgsl"), {
+const scene = effect(gpu, read(SHADER), {
   set: { params: { resolution: [W, H], pointer: [yaw, pitch], time: 4.0 } },
 });
 const bright = effect(gpu, read("bright-pass.wgsl"), { set: { samp, src: sceneT } });

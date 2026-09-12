@@ -27,7 +27,11 @@ export async function initGame() {
   const ui = createUI();
 
   const scene = new THREE.Scene();
-  const skyTex = new THREE.TextureLoader().load("./assets/sky.png");
+  // Baked from src/backdrop/ember-world-equirect.wgsl via tools/bake-backdrop.mjs:
+  // a molten world and a cold moon over warm dust. Baked rather than rendered
+  // live because Chromium hands out no WebGPU adapter when Vulkan is disabled.
+  // Palette deliberately sits with the 0x2d1f16 fog rather than fighting it.
+  const skyTex = new THREE.TextureLoader().load("./assets/ember-sky.png");
   skyTex.colorSpace = THREE.SRGBColorSpace;
   skyTex.mapping = THREE.EquirectangularReflectionMapping;
   scene.background = skyTex;
