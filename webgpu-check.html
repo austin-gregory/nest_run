@@ -1,0 +1,128 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WebGPU / vgpu check</title>
+<style>
+  body{margin:0;background:#05070a;color:#ddd;font:14px/1.6 monospace;padding:24px}
+  h1{color:#00b4ff;font-size:20px;letter-spacing:2px;margin:0 0 16px}
+  .row{padding:6px 0;border-bottom:1px solid #1a2230}
+  .ok{color:#00e87a}.bad{color:#ff5555}.warn{color:#e8c000}
+  pre{white-space:pre-wrap;color:#888;margin:4px 0 0}
+  canvas{margin-top:18px;width:480px;max-width:100%;height:270px;border:1px solid #1a2230;background:#000;display:block}
+</style>
+<h1>WEBGPU / VGPU CHECK</h1>
+<div id="out"></div>
+<canvas id="c"></canvas>
+
+<script type="module">
+const out = document.getElementById("out");
+function row(label, status, detail) {
+  const d = document.createElement("div");
+  d.className = "row";
+  d.innerHTML = `<span class="${status}">${status === "ok" ? "PASS" : status === "warn" ? "WARN" : "FAIL"}</span> — ${label}`;
+  if (detail) { const p = document.createElement("pre"); p.textContent = detail; d.appendChild(p); }
+  out.appendChild(d);
+  return d;
+}
+
+// 1. Does the browser expose WebGPU at all?
+if (!navigator.gpu) {
+  row("navigator.gpu is missing — this browser has WebGPU disabled or unavailable", "bad",
+      "Chromium: check chrome://gpu and chrome://flags/#enable-unsafe-webgpu\nSnap builds often ship without a working GPU stack.");
+  throw new Error("no webgpu");
+}
+row("navigator.gpu present", "ok");
+
+// 2. Can we actually get an adapter?
+let adapter;
+try {
+  adapter = await navigator.gpu.requestAdapter();
+} catch (e) {
+  row("requestAdapter() threw", "bad", String(e));
+  throw e;
+}
+if (!adapter) {
+  row("requestAdapter() returned null — no usable GPU adapter", "bad",
+      "The API exists but no adapter is available. On Linux this is usually a driver/sandbox issue.\nCheck chrome://gpu for 'WebGPU: Disabled'.");
+  throw new Error("no adapter");
+}
+const info = adapter.info || (adapter.requestAdapterInfo ? await adapter.requestAdapterInfo() : null);
+row("adapter acquired", "ok", info ? JSON.stringify({
+  vendor: info.vendor, architecture: info.architecture,
+  device: info.device, description: info.description,
+}, null, 1) : "(no adapter info exposed)");
+
+// 3. Does vgpu load from the CDN?
+let vgpu;
+try {
+  vgpu = await import("https://esm.sh/vgpu@0.4.1");
+  row("vgpu loaded from esm.sh", "ok", "exports: " + Object.keys(vgpu).slice(0, 12).join(", ") + " …");
+} catch (e) {
+  row("vgpu failed to load from esm.sh", "bad", String(e));
+  throw e;
+}
+
+// 4. Do our shader files fetch?
+const paths = [
+  "./src/backdrop/black-hole.wgsl",
+  "./src/backdrop/bright-pass.wgsl",
+  "./src/backdrop/blur.wgsl",
+  "./src/backdrop/composite.wgsl",
+];
+const sources = {};
+try {
+  for (const p of paths) {
+    const r = await fetch(p);
+    if (!r.ok) throw new Error(`${p} -> HTTP ${r.status}`);
+    sources[p] = await r.text();
+  }
+  row("all 4 shaders fetched", "ok", paths.map(p => `${p}  ${sources[p].length} bytes`).join("\n"));
+} catch (e) {
+  row("shader fetch failed", "bad", String(e));
+  throw e;
+}
+
+// 5. Render the actual backdrop chain into the canvas below.
+try {
+  const canvas = document.getElementById("c");
+  const gpu = await vgpu.init();
+  const surface = vgpu.surface(gpu, canvas, { dpr: [1, 1] });
+  const samp = vgpu.sampler(gpu, { minFilter: "linear", magFilter: "linear" });
+  const size = surface.size;
+  const sceneT = vgpu.target(gpu, { size, format: "rgba16float" });
+  const bh = Math.min(360, size[1]);
+  const bw = Math.max(1, Math.round(bh * size[0] / size[1]));
+  const bloom = [
+    vgpu.target(gpu, { size: [bw, bh], format: "rgba16float" }),
+    vgpu.target(gpu, { size: [bw, bh], format: "rgba16float" }),
+  ];
+  const BLURS = [
+    { direction: [1, 0], radius: 1 }, { direction: [0, 1], radius: 1 },
+    { direction: [1, 0], radius: 2.4 }, { direction: [0, 1], radius: 2.4 },
+  ];
+  const scene = vgpu.effect(gpu, sources[paths[0]], {
+    set: { params: { resolution: size, pointer: [0, 0.05], time: 0 } },
+  });
+  const bright = vgpu.effect(gpu, sources[paths[1]], { set: { samp, src: sceneT } });
+  const blurs = BLURS.map((blur, i) => vgpu.effect(gpu, sources[paths[2]], {
+    set: { samp, src: bloom[i % 2], blur: { ...blur, texelSize: bloom[i % 2].texelSize } },
+  }));
+  const composite = vgpu.effect(gpu, sources[paths[3]], {
+    set: { samp, scene: sceneT, bloom: bloom[0] },
+  });
+
+  const CLEAR = [0, 0, 0, 1];
+  const t0 = performance.now();
+  const gpuClock = vgpu.clock(gpu);
+  vgpu.frameLoop(gpu, (frame) => {
+    scene.set({ params: { pointer: [gpuClock.time * 0.25, 0.35], time: gpuClock.time } });
+    frame.pass({ target: sceneT, clear: CLEAR }, (p) => p.draw(scene));
+    frame.pass({ target: bloom[0], clear: CLEAR }, (p) => p.draw(bright));
+    blurs.forEach((b, i) => frame.pass({ target: bloom[(i + 1) % 2], clear: CLEAR }, (p) => p.draw(b)));
+    frame.pass({ target: surface, clear: CLEAR }, (p) => p.draw(composite));
+  });
+  row(`backdrop chain rendering (first frame after ${Math.round(performance.now() - t0)}ms)`, "ok",
+      "If the canvas below is spinning, the arena backdrop will work.");
+} catch (e) {
+  row("backdrop render failed", "bad", String(e) + "\n" + (e.stack || ""));
+}
+</script>

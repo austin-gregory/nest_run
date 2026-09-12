@@ -106,8 +106,11 @@ export function createBackdrop({ sceneName = "blackhole", gameCanvas, scale } = 
     gpu = await vgpu.init();
     if (disposed) { gpu.dispose(); return false; }
 
+    // The surface stays at 1x — a sub-1 dpr is not a valid range. Cost is cut
+    // on the scene target instead, which is where the raymarch actually runs;
+    // the composite pass upsamples it to the surface.
     const renderScale = scale != null ? scale : config.scale;
-    const surface = vgpu.surface(gpu, canvas, { dpr: [renderScale, renderScale] });
+    const surface = vgpu.surface(gpu, canvas, { dpr: [1, 1] });
     const samp = vgpu.sampler(gpu, { minFilter: "linear", magFilter: "linear" });
 
     const effects = {
@@ -119,7 +122,7 @@ export function createBackdrop({ sceneName = "blackhole", gameCanvas, scale } = 
       composite: vgpu.effect(gpu, sources.composite, { set: { samp } }),
     };
 
-    let targets = makeTargets(vgpu, gpu, surface.size);
+    let targets = makeTargets(vgpu, gpu, surface.size, renderScale);
     bind(effects, targets);
 
     await Promise.all([
@@ -133,7 +136,7 @@ export function createBackdrop({ sceneName = "blackhole", gameCanvas, scale } = 
     onResize = () => {
       if (disposed || !gpu) return;
       try {
-        const next = makeTargets(vgpu, gpu, surface.size);
+        const next = makeTargets(vgpu, gpu, surface.size, renderScale);
         bind(effects, next);
         destroyTargets(targets);
         targets = next;
@@ -166,6 +169,7 @@ export function createBackdrop({ sceneName = "blackhole", gameCanvas, scale } = 
 
   const ready = start().catch((err) => {
     console.warn("[backdrop] failed to start — keeping the built-in sky:", err);
+    showFailureBadge(sceneName, err);
     dispose();
     return false;
   });
@@ -175,6 +179,30 @@ export function createBackdrop({ sceneName = "blackhole", gameCanvas, scale } = 
     dispose,
     setView(yaw, pitch) { view.yaw = yaw; view.pitch = pitch; },
   };
+}
+
+// A silent fallback is indistinguishable from "the feature isn't wired up", so
+// say so on screen. Dismissible, and never shown when the backdrop is running.
+function showFailureBadge(sceneName, err) {
+  try {
+    if (document.getElementById("backdrop-error")) return;
+    const el = document.createElement("div");
+    el.id = "backdrop-error";
+    el.style.cssText = [
+      "position:fixed", "left:12px", "bottom:12px", "z-index:10000",
+      "max-width:min(560px,90vw)", "padding:10px 14px",
+      "background:rgba(40,0,0,.9)", "border:1px solid #a33", "border-radius:6px",
+      "color:#ffb4b4", "font:12px/1.5 monospace", "cursor:pointer",
+      "white-space:pre-wrap",
+    ].join(";");
+    el.textContent =
+      `backdrop "${sceneName}" failed — using the built-in sky
+` +
+      `${err && err.message ? err.message : err}
+(click to dismiss)`;
+    el.addEventListener("click", () => el.remove());
+    document.body.appendChild(el);
+  } catch { /* nothing useful to do if even this fails */ }
 }
 
 async function loadShaders(paths) {
@@ -187,12 +215,17 @@ async function loadShaders(paths) {
   return Object.fromEntries(names.map((n, i) => [n, texts[i]]));
 }
 
-function makeTargets(vgpu, gpu, size) {
+function makeTargets(vgpu, gpu, size, renderScale = 1) {
+  // The raymarch runs here, so this is what gets scaled down.
+  const sceneSize = [
+    Math.max(1, Math.round(size[0] * renderScale)),
+    Math.max(1, Math.round(size[1] * renderScale)),
+  ];
   // Bloom runs at a fixed small height regardless of window size.
-  const height = Math.min(360, size[1]);
-  const bloomSize = [Math.max(1, Math.round((height * size[0]) / size[1])), height];
+  const height = Math.min(360, sceneSize[1]);
+  const bloomSize = [Math.max(1, Math.round((height * sceneSize[0]) / sceneSize[1])), height];
   return {
-    scene: vgpu.target(gpu, { size, format: "rgba16float" }),
+    scene: vgpu.target(gpu, { size: sceneSize, format: "rgba16float" }),
     bloom: [
       vgpu.target(gpu, { size: bloomSize, format: "rgba16float" }),
       vgpu.target(gpu, { size: bloomSize, format: "rgba16float" }),
