@@ -28,8 +28,62 @@ export async function initArena() {
   const scene = new THREE.Scene();
   const skyTex = new THREE.TextureLoader().load("./assets/sky.png");
   skyTex.colorSpace = THREE.SRGBColorSpace;
+  skyTex.mapping = THREE.EquirectangularReflectionMapping;
   scene.background = skyTex;
   scene.fog = new THREE.Fog(0x2d1f16, 30, 220);
+
+  // ── Procedural twinkling starfield (layered in front of the sky image) ──
+  const STAR_COUNT = 2200;
+  const STAR_RADIUS = 600;
+  const STAR_SPIN = 0.012;   // rad/s — slow drift so the sky reads as rotating
+  const starGeo = new THREE.BufferGeometry();
+  const starPos = new Float32Array(STAR_COUNT * 3);
+  const starPhase = new Float32Array(STAR_COUNT);
+  const starSize = new Float32Array(STAR_COUNT);
+  for (let i = 0; i < STAR_COUNT; i++) {
+    const u = Math.random(), v = Math.random();
+    const theta = 2 * Math.PI * u;
+    const phi = Math.acos(2 * v - 1);
+    starPos[i * 3] = STAR_RADIUS * Math.sin(phi) * Math.cos(theta);
+    starPos[i * 3 + 1] = STAR_RADIUS * Math.cos(phi);
+    starPos[i * 3 + 2] = STAR_RADIUS * Math.sin(phi) * Math.sin(theta);
+    starPhase[i] = Math.random() * Math.PI * 2;
+    starSize[i] = 1.2 + Math.random() * 2.4;
+  }
+  starGeo.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
+  starGeo.setAttribute("aPhase", new THREE.BufferAttribute(starPhase, 1));
+  starGeo.setAttribute("aSize", new THREE.BufferAttribute(starSize, 1));
+  const starMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 } },
+    transparent: true,
+    depthWrite: false,
+    fog: false,
+    blending: THREE.AdditiveBlending,
+    vertexShader: `
+      attribute float aPhase;
+      attribute float aSize;
+      uniform float uTime;
+      varying float vTwinkle;
+      void main() {
+        vTwinkle = 0.55 + 0.45 * sin(uTime * 1.6 + aPhase);
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = aSize * (300.0 / -mv.z);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: `
+      varying float vTwinkle;
+      void main() {
+        vec2 c = gl_PointCoord - 0.5;
+        float d = length(c);
+        float a = smoothstep(0.5, 0.0, d) * vTwinkle;
+        gl_FragColor = vec4(vec3(1.0, 0.97, 0.9), a);
+      }
+    `,
+  });
+  const stars = new THREE.Points(starGeo, starMat);
+  stars.frustumCulled = false;
+  scene.add(stars);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(innerWidth, innerHeight);
@@ -1106,6 +1160,10 @@ export async function initArena() {
     const dt = Math.min(0.033, t - last);
     last = t;
     lastDt = dt;
+
+    camera.getWorldPosition(stars.position);
+    stars.rotation.y += STAR_SPIN * dt;
+    starMat.uniforms.uTime.value = t;
 
     if (!game.win) game.elapsed = t - game.startTime;
 
