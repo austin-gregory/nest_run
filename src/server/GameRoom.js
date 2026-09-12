@@ -388,11 +388,13 @@ class GameRoom extends Room {
       this.broadcast("wallSpawn", { id, progress, hp: RTS.WALL_HP });
     });
 
-    // FPS client reports wall damage
+    // FPS client reports wall damage. The bot host reports its bots' damage
+    // too — in a commander-vs-bots match that host is the rts client.
     this.onMessage("wallHit", (client, data) => {
       if (this.state.phase !== "playing") return;
       const player = this.state.players.get(client.sessionId);
-      if (!player || player.role !== "fps") return;
+      if (!player) return;
+      if (player.role !== "fps" && client.sessionId !== this._botHost) return;
 
       const wall = this._walls[data.id];
       if (!wall) return;

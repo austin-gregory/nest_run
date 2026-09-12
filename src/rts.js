@@ -365,7 +365,7 @@ export async function initRTS() {
   const wallMarkerGeo = new THREE.BoxGeometry(RTS.WALL_WIDTH, 3, RTS.WALL_DEPTH);
   const wallMarkerMat = new THREE.MeshBasicMaterial({ color: 0xb08a7a, transparent: true, opacity: 0.8 });
 
-  function addWallMarker(id, progress) {
+  function addWallMarker(id, progress, hp) {
     const mesh = new THREE.Mesh(wallMarkerGeo, wallMarkerMat.clone());
     const pt = map.getTrackPoint(progress);
     const tan = map.getTrackTangent(progress);
@@ -373,6 +373,10 @@ export async function initRTS() {
     mesh.position.set(pt.x, 5, pt.z);
     mesh.rotation.y = angle;
     mesh.userData.progress = progress;
+    mesh.userData.hp = hp != null ? hp : RTS.WALL_HP;
+    mesh.userData.x = pt.x;
+    mesh.userData.z = pt.z;
+    mesh.userData.y = map.gy(pt.x, pt.z) + RTS.WALL_HEIGHT / 2;
     scene.add(mesh);
     wallMarkers.set(id, mesh);
   }
@@ -659,6 +663,7 @@ export async function initRTS() {
   // ── Commander-hosted simulation state ──────────────────────────────────
   // Declared ahead of the network block because its message handlers close
   // over these.
+  const BOT_WALL_DMG = 36;      // same per-bullet damage as the player SMG
   const coopBots = new Map();   // sid -> bot instance
   const bugSim = new Map();     // enemy id -> headless bug
   let botHostSid = null;
@@ -776,7 +781,13 @@ export async function initRTS() {
 
     // Wall spawned
     room.onMessage("wallSpawn", (data) => {
-      addWallMarker(data.id, data.progress);
+      addWallMarker(data.id, data.progress, data.hp);
+    });
+
+    // Keep local wall hp in step so hosted bots stop shooting a dead wall.
+    room.onMessage("wallDamage", (data) => {
+      const mesh = wallMarkers.get(data.id);
+      if (mesh) mesh.userData.hp = data.hp;
     });
 
     // Wall destroyed
@@ -994,8 +1005,31 @@ export async function initRTS() {
     const allies = [];
     for (const b of coopBots.values()) allies.push({ x: b.x, z: b.z });
 
+    // The wall pinning the cart, if any.
+    let blockingWall = null;
+    for (const [id, mesh] of wallMarkers) {
+      const wp = mesh.userData.progress;
+      if (wp === undefined || (mesh.userData.hp || 0) <= 0) continue;
+      if (map.cart.p < wp - 0.02) continue;
+      if (!blockingWall || wp < blockingWall.userData.progress) blockingWall = mesh;
+    }
+    const wallView = blockingWall ? {
+      id: [...wallMarkers.entries()].find(([, m]) => m === blockingWall)[0],
+      x: blockingWall.userData.x,
+      y: blockingWall.userData.y,
+      z: blockingWall.userData.z,
+      hp: blockingWall.userData.hp,
+    } : null;
+
     const ctx = {
       map, enemies: enemyViews, allies, cartPos,
+      blockingWall: wallView,
+      onWallShoot: (bot, wv, hit) => {
+        if (!hit || !blockingWall) return;
+        blockingWall.userData.hp -= BOT_WALL_DMG;
+        room.send("wallHit", { id: wv.id, dmg: BOT_WALL_DMG });
+        if (blockingWall.userData.hp <= 0) removeWallMarker(wv.id);
+      },
       onKill: (bot, tgt) => {
         const bug = tgt._src;
         if (!bug) return;

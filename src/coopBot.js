@@ -33,6 +33,11 @@ const FAR_DIST         = 60;
 const AIM_LERP_RATE    = 5;     // rad/s — visibly slower than a human flick
 const REACTION_TIME    = [0.18, 0.45]; // delay before opening fire on a new target
 
+// A wall is a big static target, so bots connect far more often than against a
+// scurrying bug — but still well short of a player, who barely misses one.
+// At 1200 wall HP and 36 damage a lone bot needs ~14s; a human needs ~3s.
+const WALL_HIT_CHANCE  = 0.7;
+
 // ── Positioning ──────────────────────────────────────────────────────────────
 // Bots must stand INSIDE the cart's push radius to actually move it, so the
 // escort ring is a fraction of that radius rather than a fixed distance.
@@ -206,11 +211,21 @@ export function tickCoopBot(bot, dt, ctx) {
   const wLen = Math.hypot(wishX, wishZ);
   if (wLen > 0.001) { wishX /= wLen; wishZ /= wLen; }
 
+  // ── Firing target ─────────────────────────────────────────────────────────
+  // A wall blocking the cart stops the run dead, so it outranks bugs — except
+  // when one is already biting, which has to be dealt with first.
+  const wall = ctx.blockingWall || null;
+  const bugUrgent = !!target && tDist < KEEP_AWAY;
+  const shootWall = !!wall && !bugUrgent;
+  const aimAt = shootWall
+    ? { x: wall.x, y: wall.y != null ? wall.y : bot.y, z: wall.z }
+    : target;
+
   // ── Aim ───────────────────────────────────────────────────────────────────
-  if (target) {
-    const dx = target.x - bot.x;
-    const dz = target.z - bot.z;
-    const dy = (target.y + 0.8) - bot.y;
+  if (aimAt) {
+    const dx = aimAt.x - bot.x;
+    const dz = aimAt.z - bot.z;
+    const dy = (aimAt.y + 0.8) - bot.y;
     const hDist = Math.hypot(dx, dz);
     const desiredYaw = Math.atan2(-dx, -dz);
     const desiredPitch = Math.atan2(dy, Math.max(0.001, hDist));
@@ -293,7 +308,14 @@ export function tickCoopBot(bot, dt, ctx) {
   bot.pushingCart = !!cart && Math.hypot(cart.x - bot.x, cart.z - bot.z) <= cartRad;
 
   // ── Shooting ──────────────────────────────────────────────────────────────
-  if (target && bot.reactionTimer <= 0 && bot.shootCooldown <= 0 && tDist <= SHOT_RANGE) {
+  if (shootWall && bot.shootCooldown <= 0) {
+    const wDist = Math.hypot(wall.x - bot.x, wall.z - bot.z);
+    if (wDist <= SHOT_RANGE) {
+      bot.shootCooldown = 1 / SHOT_RATE;
+      const hit = Math.random() < WALL_HIT_CHANCE;
+      if (ctx.onWallShoot) ctx.onWallShoot(bot, wall, hit);
+    }
+  } else if (target && bot.reactionTimer <= 0 && bot.shootCooldown <= 0 && tDist <= SHOT_RANGE) {
     bot.shootCooldown = 1 / SHOT_RATE;
 
     const t = clamp((tDist - CLOSE_DIST) / (FAR_DIST - CLOSE_DIST), 0, 1);

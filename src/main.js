@@ -1361,10 +1361,49 @@ export async function initGame() {
     const allies = [{ x: player.pos.x, z: player.pos.z }];
     for (const b of coopBots.values()) allies.push({ x: b.x, z: b.z });
 
+    // The wall currently pinning the cart, if any — carTick() clamps progress
+    // at the nearest one ahead, and until it's destroyed nothing advances.
+    let blockingWall = null;
+    for (const w of walls) {
+      if (w.hp <= 0) continue;
+      if (map.cart.p < w.progress - 0.02) continue;   // not reached it yet
+      if (!blockingWall || w.progress < blockingWall.progress) blockingWall = w;
+    }
+    const wallView = blockingWall ? {
+      id: blockingWall.id,
+      x: blockingWall.mesh.position.x,
+      y: blockingWall.mesh.position.y,
+      z: blockingWall.mesh.position.z,
+      hp: blockingWall.hp,
+    } : null;
+
     const ctx = {
       map,
       enemies: enemyViews,
       allies,
+      blockingWall: wallView,
+      onWallShoot: (bot, wv, hit) => {
+        _botShotFrom.set(bot.x, bot.y - 0.15, bot.z);
+        _botShotTo.set(wv.x, wv.y, wv.z);
+        if (!hit) {
+          _botShotTo.x += (Math.random() - 0.5) * 3;
+          _botShotTo.y += (Math.random() - 0.5) * 3;
+          _botShotTo.z += (Math.random() - 0.5) * 3;
+        }
+        spawnTracer(_botShotFrom.clone(), _botShotTo.clone());
+        if (room && isMultiplayer) {
+          room.send("botShot", {
+            fx: _botShotFrom.x, fy: _botShotFrom.y, fz: _botShotFrom.z,
+            tx: _botShotTo.x, ty: _botShotTo.y, tz: _botShotTo.z,
+          });
+        }
+        if (!hit || !blockingWall) return;
+        blockingWall.hp -= weapon.dmg;
+        blockingWall.mat.emissive.setHex(0x552200);
+        blockingWall.mat.emissiveIntensity = 1.5;
+        if (room) room.send("wallHit", { id: blockingWall.id, dmg: weapon.dmg });
+        if (blockingWall.hp <= 0) destroyWall(blockingWall.id);
+      },
       onShoot: (bot, tgt, hit) => {
         _botShotFrom.set(bot.x, bot.y - 0.15, bot.z);
         _botShotTo.set(tgt.x, tgt.y + 0.6, tgt.z);
