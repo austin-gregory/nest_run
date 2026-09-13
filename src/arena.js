@@ -9,6 +9,7 @@ import { createArenaRoom, joinArenaRoom } from "./network.js";
 import { getUser, getDisplayName, getCachedCustomization } from "./supabase.js";
 import { createBackdrop, isBackdropSupported } from "./backdrop.js";
 import { createFovSetting } from "./fovSetting.js";
+import { createArenaPlanet } from "./arenaPlanet.js";
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -40,6 +41,16 @@ export async function initArena() {
   skyTex.mapping = THREE.EquirectangularReflectionMapping;
   scene.background = skyTex;
   scene.fog = new THREE.Fog(0x05070a, 40, 260);
+
+  // A real mesh, not paint on the sky: its bands flow, its terminator is lit,
+  // and the platforms occlude it. Cold blues to sit against the black hole's
+  // orange rather than compete with it. Placed opposite the hole so the two are
+  // not in frame together.
+  const planet = createArenaPlanet(scene, {
+    direction: new THREE.Vector3(-0.55, 0.42, -0.72),
+    distance: 400,      // inside the camera's 600 far plane, with the radius
+    radius: 58,
+  });
 
   // ── Procedural twinkling starfield (layered in front of the sky image) ──
   const STAR_COUNT = 2200;
@@ -1219,6 +1230,7 @@ export async function initArena() {
     last = t;
     lastDt = dt;
 
+    planet.update(dt, camera);
     camera.getWorldPosition(stars.position);
     stars.rotation.y += STAR_SPIN * dt;
     starMat.uniforms.uTime.value = t;
