@@ -7,7 +7,6 @@ import { createArenaWorld, ARENA_SPAWN_POINTS, FALL_THRESHOLD } from "./arenaWor
 import { createWeaponView } from "./weaponView.js";
 import { createArenaRoom, joinArenaRoom } from "./network.js";
 import { getUser, getDisplayName, getCachedCustomization } from "./supabase.js";
-import { createBackdrop, isBackdropSupported } from "./backdrop.js";
 import { createFovSetting } from "./fovSetting.js";
 import { createArenaPlanet } from "./arenaPlanet.js";
 
@@ -29,27 +28,37 @@ export async function initArena() {
   const ui = createUI();
 
   const scene = new THREE.Scene();
-  // Baked from src/backdrop/black-hole-equirect.wgsl (tools/bake-frames.mjs),
-  // so no WebGPU is needed at runtime — Chromium hands out no adapter when
-  // Vulkan is disabled, which is common on Linux.
-  //
-  // Deliberately a single still frame. The disk's brightness is fixed by
-  // Doppler beaming and radial falloff, so only its internal turbulence can
-  // move; a crossfading sequence still read as static and cost 6 textures.
-  const skyTex = new THREE.TextureLoader().load("./assets/blackhole-sky.png");
+  // Baked from src/backdrop/arena-sky-equirect.wgsl (tools/bake-frames.mjs):
+  // just a starfield and two moons. The focal bodies are real meshes below,
+  // which animate and are occluded by the platforms, so the backdrop only has
+  // to sit behind them. No WebGPU needed at runtime.
+  const skyTex = new THREE.TextureLoader().load("./assets/arena-sky.png");
   skyTex.colorSpace = THREE.SRGBColorSpace;
   skyTex.mapping = THREE.EquirectangularReflectionMapping;
   scene.background = skyTex;
   scene.fog = new THREE.Fog(0x05070a, 40, 260);
 
-  // A real mesh, not paint on the sky: its bands flow, its terminator is lit,
-  // and the platforms occlude it. Cold blues to sit against the black hole's
-  // orange rather than compete with it. Placed opposite the hole so the two are
-  // not in frame together.
+  // Two real meshes, not paint on the sky: their bands flow, their terminators
+  // are lit, and the platforms occlude them. Placed ~137 degrees apart so they
+  // are never in frame together.
   const planet = createArenaPlanet(scene, {
     direction: new THREE.Vector3(-0.55, 0.42, -0.72),
     distance: 400,      // inside the camera's 600 far plane, with the radius
     radius: 58,
+  });
+
+  // Warm amber giant where the black hole used to be. Smaller and further out,
+  // so the pair read as being at different distances.
+  const planet2 = createArenaPlanet(scene, {
+    direction: new THREE.Vector3(0.62, 0.30, 0.72),
+    distance: 430,
+    radius: 46,
+    lightDir: new THREE.Vector3(-0.45, 0.30, 0.68),
+    deep:  [0.130, 0.045, 0.020],
+    mid:   [0.520, 0.220, 0.060],
+    pale:  [0.880, 0.680, 0.380],
+    storm: [0.090, 0.020, 0.012],
+    rim:   [0.850, 0.450, 0.180],
   });
 
   // ── Procedural twinkling starfield (layered in front of the sky image) ──
@@ -105,33 +114,10 @@ export async function initArena() {
   stars.frustumCulled = false;
   scene.add(stars);
 
-  // ── WebGPU backdrop ────────────────────────────────────────────────────
-  // Arena floats in space, so it gets the black hole. When it's running the
-  // scene clears to transparent and the sky image/starfield step aside;
-  // without WebGPU nothing changes and sky.png stays.
-  const useBackdrop = isBackdropSupported();
-
-  // alpha has to be requested up front — a WebGL context cannot gain it later,
-  // and the live backdrop needs to show through when it swaps in.
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: useBackdrop });
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(innerWidth, innerHeight);
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   document.body.appendChild(renderer.domElement);
-
-  // The live WebGPU backdrop is an upgrade over the baked sky — animated, and
-  // the disk actually turns as you move. It only swaps in once it is genuinely
-  // drawing, so a machine without a WebGPU adapter simply keeps the baked sky
-  // and looks the same as before. Opt in with ?backdrop=live.
-  let backdrop = null;
-  if (useBackdrop && new URLSearchParams(location.search).get("backdrop") === "live") {
-    backdrop = createBackdrop({ sceneName: "blackhole", gameCanvas: renderer.domElement });
-    backdrop.ready.then((ok) => {
-      if (!ok) { backdrop = null; return; }
-      renderer.setClearColor(0x000000, 0);
-      scene.background = null;      // the live shader draws its own sky and stars
-      stars.visible = false;
-    });
-  }
 
   // ── VR / WebXR setup ──────────────────────────────────────────────────
   const vrMode = new URLSearchParams(window.location.search).get("vr") === "1";
@@ -1231,12 +1217,10 @@ export async function initArena() {
     lastDt = dt;
 
     planet.update(dt, camera);
+    planet2.update(dt, camera);
     camera.getWorldPosition(stars.position);
     stars.rotation.y += STAR_SPIN * dt;
     starMat.uniforms.uTime.value = t;
-
-    // Sky turns with the player.
-    if (backdrop) backdrop.setView(player.yaw, -player.pitch);
 
     if (!game.win) game.elapsed = t - game.startTime;
 
