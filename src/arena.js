@@ -7,6 +7,8 @@ import { createArenaWorld, ARENA_SPAWN_POINTS, FALL_THRESHOLD } from "./arenaWor
 import { createWeaponView } from "./weaponView.js";
 import { createArenaRoom, joinArenaRoom } from "./network.js";
 import { getUser, getDisplayName, getCachedCustomization } from "./supabase.js";
+import { createFovSetting } from "./fovSetting.js";
+import { createArenaPlanet } from "./arenaPlanet.js";
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -26,11 +28,38 @@ export async function initArena() {
   const ui = createUI();
 
   const scene = new THREE.Scene();
-  const skyTex = new THREE.TextureLoader().load("./assets/sky.png");
+  // Baked from src/backdrop/arena-sky-equirect.wgsl (tools/bake-frames.mjs):
+  // just a starfield and two moons. The focal bodies are real meshes below,
+  // which animate and are occluded by the platforms, so the backdrop only has
+  // to sit behind them. No WebGPU needed at runtime.
+  const skyTex = new THREE.TextureLoader().load("./assets/arena-sky.png");
   skyTex.colorSpace = THREE.SRGBColorSpace;
   skyTex.mapping = THREE.EquirectangularReflectionMapping;
   scene.background = skyTex;
-  scene.fog = new THREE.Fog(0x2d1f16, 30, 220);
+  scene.fog = new THREE.Fog(0x05070a, 40, 260);
+
+  // Two real meshes, not paint on the sky: their bands flow, their terminators
+  // are lit, and the platforms occlude them. Placed ~137 degrees apart so they
+  // are never in frame together.
+  const planet = createArenaPlanet(scene, {
+    direction: new THREE.Vector3(-0.55, 0.42, -0.72),
+    distance: 400,      // inside the camera's 600 far plane, with the radius
+    radius: 58,
+  });
+
+  // Warm amber giant where the black hole used to be. Smaller and further out,
+  // so the pair read as being at different distances.
+  const planet2 = createArenaPlanet(scene, {
+    direction: new THREE.Vector3(0.62, 0.30, 0.72),
+    distance: 430,
+    radius: 46,
+    lightDir: new THREE.Vector3(-0.45, 0.30, 0.68),
+    deep:  [0.130, 0.045, 0.020],
+    mid:   [0.520, 0.220, 0.060],
+    pale:  [0.880, 0.680, 0.380],
+    storm: [0.090, 0.020, 0.012],
+    rim:   [0.850, 0.450, 0.180],
+  });
 
   // ── Procedural twinkling starfield (layered in front of the sky image) ──
   const STAR_COUNT = 2200;
@@ -428,6 +457,11 @@ export async function initArena() {
   const menuBtnEl = document.getElementById("menu-btn");
   let menuOpen = false;
   let quitMenuGpNav = null;
+
+  // FOV slider lives in the pause menu; the render loop reads it every frame so
+  // dragging it updates the view live rather than on resume.
+  const fovSetting = createFovSetting(quitOverlay);
+  quitOverlay.insertBefore(fovSetting.row, resumeBtn);
 
   function toggleMenu() {
     if (game.win) return;
@@ -1182,6 +1216,8 @@ export async function initArena() {
     last = t;
     lastDt = dt;
 
+    planet.update(dt, camera);
+    planet2.update(dt, camera);
     camera.getWorldPosition(stars.position);
     stars.rotation.y += STAR_SPIN * dt;
     starMat.uniforms.uTime.value = t;
@@ -1385,7 +1421,7 @@ export async function initArena() {
     veil.style.opacity = game.resp ? (game.respT / 3) * 0.55 : 0;
 
     const aiming = input.pointer.aim || gp.aim || input.touch.aim;
-    const fov = aiming ? 30 : sprint ? 100 : 94;
+    const fov = fovSetting.forState({ aiming, sprinting: sprint });
     camera.fov = THREE.MathUtils.damp(camera.fov, fov, 12, dt);
     camera.updateProjectionMatrix();
     ui.setCrosshairAim(aiming, false);

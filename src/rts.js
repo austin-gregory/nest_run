@@ -12,8 +12,12 @@ export async function initRTS() {
 
   // ── Three.js setup ─────────────────────────────────────────────────────
   const scene = new THREE.Scene();
-  const skyTex = new THREE.TextureLoader().load("./assets/sky.png");
+  // Same ember sky the shooters are under — the commander overlooks the same
+  // mission, so a different sky would read as a different place. Static single
+  // frame here: this is a top-down tactical view, not an immersive one.
+  const skyTex = new THREE.TextureLoader().load("./assets/ember-sky-0.png");
   skyTex.colorSpace = THREE.SRGBColorSpace;
+  skyTex.mapping = THREE.EquirectangularReflectionMapping;
   scene.background = skyTex;
   scene.fog = new THREE.Fog(0x2d1f16, 400, 600);
 

@@ -8,6 +8,8 @@ import { createWeaponView } from "./weaponView.js";
 import { connectToGame, createRoom, joinRoom } from "./network.js";
 import { recordGame, getUser, getDisplayName, getCachedCustomization } from "./supabase.js";
 import { createCoopBot, tickCoopBot, killCoopBot } from "./coopBot.js";
+import { createSkyCycle, skyFrames } from "./skyCycle.js";
+import { createFovSetting } from "./fovSetting.js";
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -27,10 +29,19 @@ export async function initGame() {
   const ui = createUI();
 
   const scene = new THREE.Scene();
-  const skyTex = new THREE.TextureLoader().load("./assets/sky.png");
-  skyTex.colorSpace = THREE.SRGBColorSpace;
-  skyTex.mapping = THREE.EquirectangularReflectionMapping;
-  scene.background = skyTex;
+  // Baked from src/backdrop/ember-world-equirect.wgsl (tools/bake-frames.mjs):
+  // a molten world and a cold moon over warm dust, played as a crossfading
+  // sequence so the lava creeps. Baked rather than rendered live because
+  // Chromium hands out no WebGPU adapter when Vulkan is disabled. Palette
+  // deliberately sits with the 0x2d1f16 fog rather than fighting it.
+  const sky = createSkyCycle(scene, {
+    frames: skyFrames("./assets/ember-sky", 5),
+    radius: 700,          // inside the camera's 900 far plane
+    // Barely any hold: crossfading almost continuously reads as drift, whereas
+    // resting on a frame then fading reads as the sky stepping.
+    hold: 0.4,
+    fade: 5.0,
+  });
   scene.fog = new THREE.Fog(0x2d1f16, 26, 450);
 
   // ── Procedural twinkling starfield (layered in front of the sky image) ──
@@ -443,6 +454,11 @@ export async function initGame() {
   const menuBtn = document.getElementById("menu-btn");
   let menuOpen = false;
   let quitMenuGpNav = null;
+
+  // FOV slider lives in the pause menu; the render loop reads it every frame so
+  // dragging it updates the view live rather than on resume.
+  const fovSetting = createFovSetting(quitOverlay);
+  quitOverlay.insertBefore(fovSetting.row, resumeBtn);
 
   function toggleMenu() {
     if (game.win || game.intro || game.lobby) return; // don't show menu on game-over screens, the lobby, or the ship intro
@@ -2661,6 +2677,7 @@ export async function initGame() {
     lastDt = dt;
 
     updateDust(dt);
+    sky.update(dt, camera);
     stars.position.copy(camera.position);
     starMat.uniforms.uTime.value = t;
 
@@ -2868,7 +2885,7 @@ export async function initGame() {
     veil.style.opacity = game.resp ? (game.respT / 3) * 0.55 : 0;
 
     const aiming = input.pointer.aim || gp.aim || input.touch.aim;
-    const fov = aiming ? 30 : sprint ? 100 : 94;
+    const fov = fovSetting.forState({ aiming, sprinting: sprint });
     camera.fov = THREE.MathUtils.damp(camera.fov, fov, 12, dt);
     camera.updateProjectionMatrix();
     ui.setCrosshairAim(aiming, trapActive);
