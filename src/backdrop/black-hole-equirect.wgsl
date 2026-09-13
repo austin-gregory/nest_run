@@ -153,9 +153,11 @@ fn volumeSample(point: vec3f, rayVelocity: vec3f) -> vec4f {
 @fragment fn fs_main(@location(0) uv: vec2f) -> @location(0) vec4f {
   let yaw = params.pointer.x;
   let pitch = clamp(params.pointer.y, -1.319, 1.319);
-  // Between the example's 21.0 (a distant speck) and 12.0 (which dominated the
-  // sky). Further out also means a smaller apparent size.
-  let orbitRadius = 17.0;
+  // 46 puts the disk at ~11.7 degrees angular radius, 40% of what 17.0 gave —
+  // i.e. 60% smaller. See the step-size cap below: viewing from this far out
+  // needs bigger strides through empty space or rays run out of iterations
+  // before escaping, and the starfield disappears.
+  let orbitRadius = 46.0;
   let cameraPosition = vec3f(
     sin(yaw) * cos(pitch) * orbitRadius,
     sin(pitch) * orbitRadius,
@@ -183,15 +185,20 @@ fn volumeSample(point: vec3f, rayVelocity: vec3f) -> vec4f {
   var transmittance = 1.0;
   var escaped = false;
 
-  for (var stepIndex = 0; stepIndex < 256; stepIndex++) {
+  for (var stepIndex = 0; stepIndex < 320; stepIndex++) {
     let radius = length(position);
     if (radius < HORIZON * 1.015) { break; }
     if (radius > 24.0 && stepIndex > 24 && dot(position, velocity) > 0.0) {
       escaped = true; break;
     }
 
-    // Step finer near the horizon where the geodesic curves hardest.
-    var stepSize = clamp((radius - HORIZON) * 0.07, 0.016, 0.24);
+    // Step finer near the horizon where the geodesic curves hardest. The upper
+    // cap was 0.24, which is fine close in but needs ~300 iterations for a
+    // round trip from orbit 46 — past the loop limit, so rays never escaped and
+    // the sky rendered black. Spacetime is nearly flat out there, so long
+    // strides cost no accuracy; the disk-slab clamp below still refines where
+    // it matters.
+    var stepSize = clamp((radius - HORIZON) * 0.07, 0.016, 1.10);
 
     // Cap steps near the thin disk so rays cannot skip its slab.
     let rxz = length(position.xz);
